@@ -1,0 +1,115 @@
+// 크롬(없으면 엣지)을 모니터마다 키오스크로 띄운다.
+//   node launch.js           → config.json 대로 화면 5개 + 조작 모니터에 관제 화면
+//   node launch.js identify  → 모든 모니터에 번호 크게 표시 (config "monitor" 번호 찾기용)
+//   node launch.js list      → 모니터 목록 출력
+//   node launch.js game.html → 화면 5개 모두에 game.html?d=화면id 띄우기 (public 폴더 안 파일)
+const { execFileSync, spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const config = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
+const BASE = `http://localhost:${config.httpPort}`;
+
+function monitors() {
+  const ps = `
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class D { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }
+"@
+[D]::SetProcessDPIAware() | Out-Null
+Add-Type -AssemblyName System.Windows.Forms
+[System.Windows.Forms.Screen]::AllScreens | ForEach-Object {
+  "{0}|{1}|{2}|{3}|{4}|{5}" -f $_.DeviceName,$_.Bounds.X,$_.Bounds.Y,$_.Bounds.Width,$_.Bounds.Height,$_.Primary }`;
+  const out = execFileSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' });
+  return out.trim().split(/\r?\n/).map((l) => {
+    const [dev, x, y, w, h, pri] = l.trim().split('|');
+    const n = parseInt((dev.match(/DISPLAY(\d+)/i) || [])[1], 10);
+    return { n, dev, x: +x, y: +y, w: +w, h: +h, primary: pri === 'True' };
+  }).sort((a, b) => a.n - b.n);
+}
+
+function browser() {
+  const L = process.env.LOCALAPPDATA || '', P = process.env.ProgramFiles || 'C:\\Program Files', P86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const c = [
+    path.join(P, 'Google\\Chrome\\Application\\chrome.exe'),
+    path.join(P86, 'Google\\Chrome\\Application\\chrome.exe'),
+    path.join(L, 'Google\\Chrome\\Application\\chrome.exe'),
+    path.join(P86, 'Microsoft\\Edge\\Application\\msedge.exe'),
+    path.join(P, 'Microsoft\\Edge\\Application\\msedge.exe'),
+  ];
+  const f = c.find((p) => fs.existsSync(p));
+  if (!f) throw new Error('크롬/엣지 못 찾음');
+  return f;
+}
+
+function open(url, mon, tag, kiosk = true) {
+  const dir = path.join(os.tmpdir(), 'vrtuio_' + tag);
+  const args = [
+    `--user-data-dir=${dir}`, '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble',
+    '--disable-features=TranslateUI', '--overscroll-history-navigation=0', '--disable-pinch',
+    '--autoplay-policy=no-user-gesture-required',
+    `--window-position=${mon.x + 50},${mon.y + 50}`, `--window-size=${Math.min(800, mon.w - 100)},${Math.min(600, mon.h - 100)}`,
+  ];
+  if (kiosk) args.push('--kiosk');
+  args.push(kiosk ? `--app=${url}` : url);
+  spawn(browser(), args, { detached: true, stdio: 'ignore' }).unref();
+  console.log(`DISPLAY${mon.n} (${mon.x},${mon.y} ${mon.w}x${mon.h}) ← ${url}`);
+}
+
+const cmd = process.argv[2];
+const mons = monitors();
+const byN = (n) => mons.find((m) => m.n === n);
+// 화면 위치(x,y 픽셀)가 있으면 위치로 찾는다. 윈도우 번호보다 확실하다.
+const pick = (o, n) => (o && o.x != null ? mons.find((m) => m.x === o.x && (o.y == null || m.y === o.y)) : byN(n));
+
+if (cmd === 'list') {
+  mons.forEach((m) => console.log(`${m.n}: ${m.dev}  위치 ${m.x},${m.y}  크기 ${m.w}x${m.h}${m.primary ? '  (주 모니터)' : ''}`));
+} else if (cmd === 'identify') {
+  mons.forEach((m) => open(`${BASE}/identify.html?n=${m.n}&info=${encodeURIComponent(`${m.w}x${m.h} @ ${m.x},${m.y}`)}`, m, 'id' + m.n));
+  console.log('각 모니터에 번호 표시함. 아무 키 누르면 닫힘 (안 닫히면 Alt+F4)');
+} else if (cmd === 'span') {
+  // 창 하나를 벽 화면 전체에 걸쳐 띄움:  node launch.js span fruit-vr.html
+  const page = process.argv[3] || 'fruit-vr.html';
+  const walls = config.displays.filter((d) => ['left', 'front', 'right'].includes(d.id));   // 바닥은 빼고 벽만
+  const S = (walls.length ? walls : config.displays).map((d) => d.screen).filter((s) => s && s.w);
+  const x0 = Math.min(...S.map((s) => s.x)), y0 = Math.min(...S.map((s) => s.y));
+  const x1 = Math.max(...S.map((s) => s.x + s.w)), y1 = Math.max(...S.map((s) => s.y + s.h));
+  const order = ['left', 'front', 'right'].map((k) => config.displays.find((d) => d.id === k)?.screen);
+  const hash = order.every(Boolean) ? '#walls=' + order.map((s) => [s.x, s.y, s.w, s.h].join(',')).join(';') : '';
+  const dir = path.join(os.tmpdir(), 'vrtuio_span');
+  spawn(browser(), [`--user-data-dir=${dir}`, '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble',
+    '--disable-features=TranslateUI', '--overscroll-history-navigation=0', '--disable-pinch', '--autoplay-policy=no-user-gesture-required',
+    `--window-position=${x0},${y0}`, `--window-size=${x1 - x0},${y1 - y0}`, `--app=${BASE}/${page}${hash}`],
+    { detached: true, stdio: 'ignore' }).unref();
+  console.log(`벽 전체 (${x0},${y0} ${x1 - x0}x${y1 - y0}) ← ${page}`);
+  const op = pick(config.operatorScreen, config.operatorMonitor);
+  if (op) open(`${BASE}/`, op, 'operator', false);
+} else if (cmd === 'floor') {
+  // 창 하나를 바닥 화면 2개에 걸쳐 띄움:  node launch.js floor lava-vr.html
+  // config 에 바닥(floorL/floorR)이 없으면 윈도우 DISPLAY 1·2 위치를 쓴다.
+  const page = process.argv[3] || 'lava-vr.html';
+  let S = ['floorL', 'floorR'].map((k) => config.displays.find((d) => d.id === k)?.screen).filter((s) => s && s.w);
+  if (S.length < 2) S = [byN(1), byN(2)].filter(Boolean).map((m) => ({ x: m.x, y: m.y, w: m.w, h: m.h }));
+  if (S.length < 2) { console.log('!! 바닥 화면 2개를 못 찾음 — node launch.js list 로 확인'); process.exit(1); }
+  S.sort((a, b) => a.x - b.x);
+  const x0 = Math.min(...S.map((s) => s.x)), y0 = Math.min(...S.map((s) => s.y));
+  const x1 = Math.max(...S.map((s) => s.x + s.w)), y1 = Math.max(...S.map((s) => s.y + s.h));
+  const hash = '#floors=' + S.map((s) => [s.x, s.y, s.w, s.h].join(',')).join(';');
+  const dir = path.join(os.tmpdir(), 'vrtuio_floor');
+  spawn(browser(), [`--user-data-dir=${dir}`, '--no-first-run', '--no-default-browser-check', '--disable-session-crashed-bubble',
+    '--disable-features=TranslateUI', '--overscroll-history-navigation=0', '--disable-pinch', '--autoplay-policy=no-user-gesture-required',
+    `--window-position=${x0},${y0}`, `--window-size=${x1 - x0},${y1 - y0}`, `--app=${BASE}/${page}${hash}`],
+    { detached: true, stdio: 'ignore' }).unref();
+  console.log(`바닥 전체 (${x0},${y0} ${x1 - x0}x${y1 - y0}) ← ${page}`);
+  const op = pick(config.operatorScreen, config.operatorMonitor);
+  if (op) open(`${BASE}/`, op, 'operator', false);
+} else {
+  const page = cmd || 'display.html';
+  for (const d of config.displays) {
+    const m = pick(d.screen, d.monitor);
+    if (!m) { console.log(`!! ${d.name}: 화면 못 찾음 (screen ${JSON.stringify(d.screen)} / monitor ${d.monitor}) — node launch.js list 로 확인`); continue; }
+    open(`${BASE}/${page}?d=${d.id}`, m, d.id);
+  }
+  const op = pick(config.operatorScreen, config.operatorMonitor);
+  if (!cmd && op) open(`${BASE}/`, op, 'operator', false);
+}

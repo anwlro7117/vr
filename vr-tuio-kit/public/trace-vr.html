@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>숫자 따라쓰기</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:none}
+html,body{height:100%;overflow:hidden;background:#0d1b2a;font-family:"Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo",sans-serif}
+button{font-family:inherit;border:none;cursor:pointer;color:inherit}
+canvas#cv{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
+#menu{position:fixed;display:none;flex-direction:column;align-items:center;justify-content:flex-start;gap:2.2vh;padding-top:5vh;
+  background:radial-gradient(ellipse at 50% 0%,#2f6f9f 0,#173b5c 55%,#0d1b2a 100%);z-index:3}
+#menu.on{display:flex}
+#menu h1{font-size:8.5vh;font-weight:900;color:#ffd166;text-shadow:0 .7vh 0 #6b3d00,0 1.4vh 3vh rgba(0,0,0,.5);text-align:center;line-height:1.1}
+#menu h1 small{display:block;font-size:2.8vh;color:#e0f2ff;text-shadow:none;font-weight:700;margin-top:1vh}
+.row{display:flex;gap:1.6vh;align-items:center;justify-content:center}
+.lbl{font-size:2.8vh;font-weight:900;color:#cfe8ff;min-width:9vh;white-space:nowrap;text-align:right}
+.opt{font-size:3vh;font-weight:900;white-space:nowrap;padding:1.3vh 3vh;border-radius:5vh;background:#24496e;color:#e8f4ff;box-shadow:0 .6vh 0 rgba(0,0,0,.35)}
+.opt.sel{background:#ffd166;color:#3a2400;transform:translateY(-.3vh)}
+.opt small{display:block;font-size:1.8vh;font-weight:700;opacity:.8}
+#startBtn{font-size:5.4vh;font-weight:900;padding:2vh 12vh;border-radius:7vh;background:#ff8c1a;color:#fff;box-shadow:0 1vh 0 #a94f00;margin-top:1vh}
+#homeBtn{position:fixed;width:7vh;height:7vh;border-radius:50%;background:rgba(255,255,255,.9);font-size:3.4vh;display:none;z-index:4}
+#homeBtn.on{display:block}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<section id="menu">
+  <h1>✏️ 숫자 따라쓰기 🔢<small>손가락으로 길을 따라 쭉~ 별을 따라가요</small></h1>
+  <div class="row"><span class="lbl">어디서</span>
+    <button class="opt" data-k="zones" data-v="front2">🙋🙋 정면 2명<small>정면 벽 반씩</small></button>
+    <button class="opt" data-k="zones" data-v="all6">👨‍👩‍👧‍👦 세 벽 6명<small>벽마다 2명씩</small></button>
+  </div>
+  <div class="row"><span class="lbl">숫자</span>
+    <button class="opt" data-k="range" data-v="5">1 ~ 5</button>
+    <button class="opt" data-k="range" data-v="9">1 ~ 9</button>
+    <button class="opt" data-k="range" data-v="10">0 ~ 9</button>
+    <span class="lbl">순서</span>
+    <button class="opt" data-k="order" data-v="seq">차례로</button>
+    <button class="opt" data-k="order" data-v="mix">섞어서</button>
+  </div>
+  <div class="row"><span class="lbl">도움</span>
+    <button class="opt" data-k="lv" data-v="0">🐣 쉬움<small>넓은 길</small></button>
+    <button class="opt" data-k="lv" data-v="1">🐥 보통</button>
+    <button class="opt" data-k="lv" data-v="2">🦅 어려움<small>희미한 길</small></button>
+  </div>
+  <button id="startBtn">시작! ▶</button>
+</section>
+<button id="homeBtn">🏠</button>
+<script>window.TUIO_DWELL_MS=5000;</script>
+<script>
+// ======================================================================
+// 숫자 따라쓰기 — VR실 벽 3면 (launch.js span trace-vr.html)
+//  구역마다 숫자 하나. 빛나는 별(다음 점)을 손으로 따라가면 길이 칠해진다.
+//  손이 떨어져도 진행은 그대로 → 다시 대고 이어서 쓰면 됨 (센서 끊김 대비)
+//  다 쓰면 그 수만큼 그림이 나오고 "하나, 둘, 셋!" 세어 준다.
+//  벽 가운데·아래 1/4은 센서가 약함 → 구역은 벽 반쪽, 숫자는 위쪽에.
+//  키보드: Esc 처음으로
+// ======================================================================
+const $=s=>document.querySelector(s);
+const LS='tracevr.';
+function load(k,d){try{const v=localStorage.getItem(LS+k);return v==null?d:JSON.parse(v)}catch(e){return d}}
+function save(k,v){try{localStorage.setItem(LS+k,JSON.stringify(v))}catch(e){}}
+const CFG={zones:load('zones','front2'),range:load('range',9),order:load('order','seq'),lv:load('lv',0)};
+const WALLS=['left','front','right'];
+const FONT='"Noto Sans KR","Malgun Gothic","Apple SD Gothic Neo",sans-serif';
+
+// ---------------- 숫자 모양 (상자 0~1, 가로는 상자 높이의 0.62배) ----------------
+function arc(cx,cy,rx,ry,a0,a1,n=24){const o=[];for(let i=0;i<=n;i++){const a=a0+(a1-a0)*i/n;o.push([cx+rx*Math.cos(a),cy+ry*Math.sin(a)])}return o}
+function cr(pts,seg=8){ // 캣멀롬 부드럽게
+  const o=[];for(let i=0;i<pts.length-1;i++){const p0=pts[i-1]||pts[i],p1=pts[i],p2=pts[i+1],p3=pts[i+2]||p2;
+    for(let k=0;k<seg;k++){const t=k/seg,t2=t*t,t3=t2*t;o.push([0,1].map(j=>.5*(2*p1[j]+(-p0[j]+p2[j])*t+(2*p0[j]-5*p1[j]+4*p2[j]-p3[j])*t2+(-p0[j]+3*p1[j]-3*p2[j]+p3[j])*t3)))}}
+  o.push(pts[pts.length-1]);return o}
+const P=Math.PI;
+const DIGITS={
+  0:[arc(.5,.5,.42,.46,-P/2,-P/2-2*P,40)],
+  1:[[[.5,.05],[.5,.95]]],
+  2:[[...arc(.5,.3,.37,.26,P+.35,2*P+.55,20),[.1,.95],[.92,.95]]],
+  3:[[...arc(.48,.27,.3,.23,P+.6,2.5*P,20),...arc(.48,.73,.34,.23,-P/2,P-.55,20).slice(1)]],
+  4:[[[.62,.05],[.08,.67],[.95,.67]],[[.7,.3],[.7,.95]]],
+  5:[[[.26,.05],[.22,.44],...arc(.5,.68,.36,.27,-2.45,P-.45,20)],[[.26,.05],[.86,.05]]],
+  6:[cr([[.78,.05],[.48,.16],[.27,.36],[.15,.65]]).concat(arc(.5,.7,.35,.26,P,-P+.25,26))],
+  7:[[[.08,.05],[.92,.05],[.4,.95]]],
+  8:[cr([[.72,.18],[.6,.05],[.4,.05],[.27,.18],[.32,.34],[.5,.47],[.7,.6],[.77,.76],[.66,.92],[.5,.96],[.32,.92],[.23,.76],[.3,.6],[.5,.47],[.67,.35],[.72,.18]],7)],
+  9:[[...arc(.48,.3,.3,.26,0,-2*P,30),[.75,.95]]],
+};
+// 점 간격 고르게 다시 찍기 (가로 0.62 비율 반영)
+const AR=.62;
+function resample(pts,step){
+  const o=[pts[0]];let carry=0;
+  for(let i=1;i<pts.length;i++){let [ax,ay]=pts[i-1];const [bx,by]=pts[i];
+    let seg=Math.hypot((bx-ax)*AR,by-ay);
+    while(carry+seg>=step){const t=(step-carry)/seg;ax=ax+(bx-ax)*t;ay=ay+(by-ay)*t;o.push([ax,ay]);seg=Math.hypot((bx-ax)*AR,by-ay);carry=0}
+    carry+=seg}
+  const L=pts[pts.length-1];if(Math.hypot((o[o.length-1][0]-L[0])*AR,o[o.length-1][1]-L[1])>step*.3)o.push(L);else o[o.length-1]=L;
+  return o}
+const CHK={};for(const d in DIGITS)CHK[d]=DIGITS[d].map(s=>resample(s,.055));
+const READ=['영','일','이','삼','사','오','육','칠','팔','구'];
+const COUNT=['','하나','둘','셋','넷','다섯','여섯','일곱','여덟','아홉'];
+const PICS=['🍎','🐟','⭐','🎈','🐥','🍓','🚗','🐞','🌸','🍩'];
+
+// ---------------- 소리 ----------------
+let AC=null;
+function ac(){if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(AC&&AC.state==='suspended')AC.resume();return AC}
+function tone(f,t0,d,type='sine',v=.2){const a=ac();if(!a)return;const o=a.createOscillator(),g=a.createGain(),T=a.currentTime+t0;o.type=type;o.frequency.setValueAtTime(f,T);g.gain.setValueAtTime(v,T);g.gain.exponentialRampToValueAtTime(.001,T+d);o.connect(g);g.connect(a.destination);o.start(T);o.stop(T+d+.02)}
+const NOTES=[523,587,659,698,784,880,988,1047,1175,1319,1397,1568];
+const sfx={
+  dot(i){tone(NOTES[i%NOTES.length],0,.12,'triangle',.12)},
+  stroke(){tone(784,0,.12,'triangle',.2);tone(1175,.08,.2,'triangle',.2)},
+  done(){[523,659,784,1047,1319].forEach((f,i)=>tone(f,i*.09,.3,'triangle',.2))},
+  pop(i){tone(660+i*60,0,.1,'sine',.18)},
+  click(){tone(880,0,.06,'square',.08)},
+};
+let speakQ=[];
+function speak(t,force){try{if(force)speechSynthesis.cancel();else if(speechSynthesis.speaking)return;const u=new SpeechSynthesisUtterance(t);u.lang='ko-KR';u.rate=1.05;speechSynthesis.speak(u)}catch(e){}}
+
+// ---------------- 화면·구역 ----------------
+const cv=$('#cv'),ctx=cv.getContext('2d');let W=0,H=0,R={},ZONES=[];
+function viewportOrigin(){const bx=Math.max(0,(outerWidth-innerWidth)/2);return{x:screenX+bx,y:screenY+Math.max(0,outerHeight-innerHeight-bx)}}
+function computeRects(){
+  const walls=load('walls',null),r={};
+  if(walls&&walls.left&&walls.front&&walls.right){const o=viewportOrigin();
+    for(const k of WALLS){const s=walls[k];let x0=s.x-o.x,y0=s.y-o.y,x1=x0+s.w,y1=y0+s.h;x0=Math.max(0,x0);y0=Math.max(0,y0);x1=Math.min(W,x1);y1=Math.min(H,y1);
+      r[k]=x1-x0>50&&y1-y0>50?{x:x0,y:y0,w:x1-x0,h:y1-y0}:null}
+    if(r.left&&r.front&&r.right)return r}
+  const w=W/3;WALLS.forEach((k,i)=>r[k]={x:Math.round(i*w),y:0,w:Math.round(w),h:H});return r}
+const ZCOL=[['#ff5a5f','255,90,95'],['#3fa9ff','63,169,255'],['#2ecc71','46,204,113'],['#ffb020','255,176,32'],['#b06cff','176,108,255'],['#ff6fb5','255,111,181']];
+function resize(){
+  W=innerWidth;H=innerHeight;cv.width=W;cv.height=H;R=computeRects();
+  const f=R.front,m=$('#menu');Object.assign(m.style,{left:f.x+'px',top:f.y+'px',width:f.w+'px',height:f.h+'px'});
+  const hb=$('#homeBtn');hb.style.left=(f.x+f.w/2-hb.offsetWidth/2||f.x+f.w/2-35)+'px';hb.style.top=(f.y+f.h*.9)+'px';   // 아래 가운데 (센서 약한 곳 → 실수로 안 눌림)
+  if(G.on)layoutZones();
+}
+addEventListener('resize',resize);
+
+// ---------------- 게임 ----------------
+const G={on:false,t:0};
+function digitList(){const n=+CFG.range;let a=n===10?[0,1,2,3,4,5,6,7,8,9]:Array.from({length:n},(_,i)=>i+1);if(CFG.order==='mix')a=shuffle(a);return a}
+function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a}
+function layoutZones(){
+  const walls=CFG.zones==='all6'?WALLS:['front'];
+  const list=[];walls.forEach(k=>{const r=R[k];for(let h=0;h<2;h++)list.push({x:r.x+r.w/2*h,y:r.y,w:r.w/2,h:r.h})});
+  list.forEach((r,i)=>{const z=ZONES[i]||(ZONES[i]={});Object.assign(z,r);z.i=i;
+    // 숫자 상자: 위쪽 12%~72% (아래 1/4 센서 약함)
+    z.bh=Math.min(z.h*.6,z.w*.9/AR);z.bw=z.bh*AR;z.bx=z.x+(z.w-z.bw)/2;z.by=z.y+z.h*.13;});
+  ZONES.length=list.length;
+}
+function newZone(z){z.tok=(z.tok||0)+1;z.list=digitList();z.k=0;z.stars=0;startDigit(z)}
+function startDigit(z){z.tok=(z.tok||0)+1;z.d=z.list[z.k];z.s=0;z.c=1;z.state='write';z.t0=G.t;z.celebT=0;z.trail=[];
+  if(ZONES.length<=2||z.i===0)speak(`숫자 ${z.d}, ${READ[z.d]}! 별을 따라 써 봐요`,ZONES.length<=2&&z.i===0)}
+function startGame(){
+  ac();sfx.click();$('#menu').classList.remove('on');$('#homeBtn').classList.add('on');G.on=true;G.done=false;
+  layoutZones();ZONES.forEach(newZone);speak('숫자 따라쓰기 시작!',true);
+}
+function goHome(){G.on=false;$('#menu').classList.add('on');$('#homeBtn').classList.remove('on');try{speechSynthesis.cancel()}catch(e){}}
+const TOL=[.15,.115,.095];   // 상자 높이 대비 허용 거리
+function px(z,p){return[z.bx+p[0]*z.bw,z.by+p[1]*z.bh]}
+function onTouch(x,y){
+  if(!G.on)return;
+  const z=ZONES.find(z=>x>=z.x&&x<z.x+z.w&&y>=z.y&&y<z.y+z.h);if(!z)return;
+  if(z.state==='end'){ // 다 쓴 구역: 숫자 자리를 누르면 한 번 더
+    if(y<z.by+z.bh&&G.t-z.endT>1.5){newZone(z);sfx.click()}return}
+  if(z.state!=='write')return;
+  z.trail.push({x,y,t:G.t});if(z.trail.length>30)z.trail.shift();
+  const st=CHK[z.d][z.s],tol=TOL[CFG.lv]*z.bh;
+  // 다음 점부터 3개 앞까지 봐줌 (센서 흔들림)
+  let adv=-1;for(let j=z.c;j<Math.min(st.length,z.c+4);j++){const [cx,cy]=px(z,st[j]);if(Math.hypot(x-cx,y-cy)<tol)adv=j}
+  // 획 시작점은 0번 점에서 시작해야 함
+  if(z.c===1&&adv<0){const [sx,sy]=px(z,st[0]);if(Math.hypot(x-sx,y-sy)<tol)z.started=true}
+  if(adv>=0&&(z.c>1||z.started||adv<=2)){
+    for(let j=z.c;j<=adv;j++)sfx.dot(j);z.c=adv+1;
+    if(z.c>=st.length){
+      z.s++;z.c=1;z.started=false;
+      if(z.s>=CHK[z.d].length){digitDone(z)}else{sfx.stroke();speak('잘했어요! 이번엔 '+(z.s+1)+'번 길')}
+    }
+  }
+}
+function digitDone(z){
+  z.state='celeb';z.celebT=G.t;z.stars++;sfx.done();
+  z.pic=PICS[Math.random()*PICS.length|0];
+  const n=z.d,tok=z.tok;   // 예전 타이머가 새 숫자를 건드리지 않게
+  for(let i=0;i<n;i++)setTimeout(()=>{if(z.state==='celeb'&&z.tok===tok){sfx.pop(i);if(ZONES.length<=2&&z.i===0||ZONES.length>2&&z.i===0)speak(COUNT[i+1],true)}},900+i*650);
+  if(n===0&&z.i===0)setTimeout(()=>speak('영은 하나도 없어요!',true),900);
+  setTimeout(()=>{if(!G.on||z.tok!==tok)return;z.k++;if(z.k>=z.list.length){z.state='end';z.endT=G.t;if(z.i===0||ZONES.length<=2)speak('다 썼어요! 최고!',true)}else startDigit(z)},1600+Math.max(1,n)*650+900);
+}
+
+// ---------------- 입력 ----------------
+const down=new Set();
+cv.addEventListener('pointerdown',e=>{ac();down.add(e.pointerId);onTouch(e.clientX,e.clientY)});
+addEventListener('pointermove',e=>{if(down.has(e.pointerId))onTouch(e.clientX,e.clientY)});
+const up=e=>down.delete(e.pointerId);addEventListener('pointerup',up);addEventListener('pointercancel',up);
+addEventListener('keydown',e=>{if(e.key==='Escape')goHome()});
+document.addEventListener('contextmenu',e=>e.preventDefault());
+
+// ---------------- 그리기 ----------------
+function txt(s,x,y,size,col='#fff',al='center',stroke){ctx.font=`900 ${size}px ${FONT}`;ctx.textAlign=al;ctx.textBaseline='middle';if(stroke){ctx.lineWidth=size*.16;ctx.strokeStyle=stroke;ctx.lineJoin='round';ctx.strokeText(s,x,y)}ctx.fillStyle=col;ctx.fillText(s,x,y)}
+function pathOf(z,pts,a=0,b=pts.length){ctx.beginPath();for(let i=a;i<b;i++){const [x,y]=px(z,pts[i]);i===a?ctx.moveTo(x,y):ctx.lineTo(x,y)}}
+function drawZone(z,t){
+  const [col,rgb]=ZCOL[z.i%ZCOL.length];
+  // 바탕
+  const g=ctx.createLinearGradient(0,z.y,0,z.y+z.h);g.addColorStop(0,'#16324f');g.addColorStop(1,'#0b1725');ctx.fillStyle=g;ctx.fillRect(z.x,z.y,z.w,z.h);
+  ctx.strokeStyle=`rgba(${rgb},.55)`;ctx.lineWidth=6;ctx.strokeRect(z.x+3,z.y+3,z.w-6,z.h-6);
+  // 위 띠
+  const hy=z.y+z.h*.065;
+  txt(z.state==='end'?'다 썼어요! 🏆':`숫자 ${z.d}`,z.x+z.w*.06,hy,z.h*.05,col,'left','#06101b');
+  txt('⭐'+z.stars,z.x+z.w*.94,hy,z.h*.045,'#ffd166','right','#06101b');
+  if(z.state==='end'){txt('🏆',z.x+z.w/2,z.by+z.bh*.42,z.bh*.45);txt('여기를 누르면 한 번 더',z.x+z.w/2,z.by+z.bh*.85,z.h*.035,'#fff','center','#06101b');return}
+  const strokes=CHK[z.d],lw=z.bh*(CFG.lv===0?.15:.12);
+  ctx.lineCap='round';ctx.lineJoin='round';
+  const ghost=CFG.lv===2?.22:1;
+  // 길(회색) + 가운데 점선
+  for(let s=0;s<strokes.length;s++){
+    ctx.globalAlpha=ghost*(s<z.s?1:s===z.s?1:.55);
+    pathOf(z,strokes[s]);ctx.strokeStyle='#e9eef3';ctx.lineWidth=lw;ctx.stroke();
+    ctx.setLineDash([lw*.25,lw*.35]);ctx.strokeStyle='#9fb3c8';ctx.lineWidth=lw*.12;ctx.stroke();ctx.setLineDash([]);
+  }
+  ctx.globalAlpha=1;
+  // 칠한 부분
+  for(let s=0;s<strokes.length;s++){
+    const n=s<z.s?strokes[s].length:s===z.s?z.c:0;if(n<2)continue;
+    pathOf(z,strokes[s],0,n);ctx.strokeStyle=z.state==='celeb'?`hsl(${(t*200)%360},90%,60%)`:col;ctx.lineWidth=lw*.8;ctx.stroke();
+  }
+  if(z.state==='write'){
+    const st=strokes[z.s];
+    // 시작점 (획 번호)
+    if(z.c===1){const [sx,sy]=px(z,st[0]),k=1+Math.sin(t*6)*.12;ctx.fillStyle='#2ecc71';ctx.beginPath();ctx.arc(sx,sy,lw*.62*k,0,6.283);ctx.fill();txt(String(z.s+1),sx,sy,lw*.6,'#fff')}
+    // 방향 화살표 (앞쪽 몇 칸)
+    for(let j=z.c+1;j<Math.min(st.length,z.c+7);j+=2){const [ax,ay]=px(z,st[j-1]),[bx,by]=px(z,st[j]);const a=Math.atan2(by-ay,bx-ax);
+      ctx.save();ctx.translate(bx,by);ctx.rotate(a);ctx.globalAlpha=.75*(1-(j-z.c)/8);ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(lw*.22,0);ctx.lineTo(-lw*.15,-lw*.2);ctx.lineTo(-lw*.15,lw*.2);ctx.closePath();ctx.fill();ctx.restore()}
+    ctx.globalAlpha=1;
+    // 다음 별
+    if(z.c<st.length){const [nx,ny]=px(z,st[z.c]);const k=1+Math.sin(t*8)*.15;ctx.shadowColor='#ffeb3b';ctx.shadowBlur=lw*.6;txt('⭐',nx,ny,lw*.85*k);ctx.shadowBlur=0}
+    // 손 자국
+    for(const p of z.trail){const a=1-(t-p.t)/.6;if(a<=0)continue;ctx.fillStyle=`rgba(255,255,255,${a*.5})`;ctx.beginPath();ctx.arc(p.x,p.y,lw*.25,0,6.283);ctx.fill()}
+    // 처음 몇 초: 숫자 읽기
+    if(t-z.t0<2.5){ctx.globalAlpha=Math.min(1,(2.5-(t-z.t0))*1.5);txt(READ[z.d]+'!',z.x+z.w/2,z.by+z.bh+z.h*.07,z.h*.06,'#fff','center','#06101b');ctx.globalAlpha=1}
+  }else if(z.state==='celeb'){
+    // 그 수만큼 그림
+    const el=t-z.celebT-.9,n=z.d,shown=Math.max(0,Math.min(n,Math.floor(el/.65)+1));
+    const per=Math.min(5,Math.max(1,n)),sz=Math.min(z.w*.8/per,z.h*.09);
+    const y0=z.by+z.bh+z.h*.04;
+    for(let i=0;i<(el>0?shown:0);i++){const r=i/5|0,c=i%5,inRow=Math.min(5,n-r*5);
+      const x=z.x+z.w/2+(c-(inRow-1)/2)*sz*1.05,y=y0+r*sz*1.0;const pop=Math.min(1,(el-i*.65)*5);txt(z.pic,x,y,sz*.9*(.6+.4*pop))}
+    if(n===0&&el>0)txt('하나도 없어요 (0)',z.x+z.w/2,y0+sz*.4,z.h*.045,'#fff','center','#06101b');
+    if(el>0&&shown>0&&n>0)txt(COUNT[shown],z.x+z.w/2,z.by-z.h*.0+z.bh*.5,z.bh*.18,'#ffd166','center','#5a3300');
+  }
+}
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(.05,(now-last)/1000);last=now;G.t+=dt;
+  ctx.fillStyle='#0d1b2a';ctx.fillRect(0,0,W,H);
+  if(G.on){for(const z of ZONES)drawZone(z,G.t)}
+  else{ // 메뉴 뒤 좌우 벽 꾸밈
+    for(const k of ['left','right']){const r=R[k];if(!r)continue;const g=ctx.createLinearGradient(0,r.y,0,r.y+r.h);g.addColorStop(0,'#1f4e79');g.addColorStop(1,'#0d1b2a');ctx.fillStyle=g;ctx.fillRect(r.x,r.y,r.w,r.h);
+      for(let i=0;i<10;i++){const x=r.x+((i*197+G.t*40*(i%3+1))%r.w),y=r.y+r.h*.15+((i*331)%(r.h*.6));ctx.globalAlpha=.25;txt(String(i),x,y+Math.sin(G.t+i)*20,r.h*.12,ZCOL[i%6][0]);ctx.globalAlpha=1}}
+  }
+  requestAnimationFrame(loop);
+}
+
+// ---------------- 메뉴 ----------------
+function syncOpts(){document.querySelectorAll('.opt').forEach(b=>b.classList.toggle('sel',String(CFG[b.dataset.k])===b.dataset.v))}
+document.querySelectorAll('.opt').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.k,v=b.dataset.v;CFG[k]=/^\d+$/.test(v)?+v:v;save(k,CFG[k]);sfx.click();syncOpts()}));
+$('#startBtn').addEventListener('click',startGame);
+$('#homeBtn').addEventListener('click',goHome);
+// 실행 파일이 주소 뒤에 붙여 준 벽 위치 (#walls=x,y,w,h;... 왼쪽;정면;오른쪽)
+(function(){const m=/walls=([-\d,;]+)/.exec(decodeURIComponent(location.hash||''));if(!m)return;
+  const p=m[1].split(';').map(t=>t.split(',').map(Number));if(p.length!==3||p.some(a=>a.length!==4||a.some(isNaN)))return;
+  const w={};WALLS.forEach((k,i)=>w[k]={x:p[i][0],y:p[i][1],w:p[i][2],h:p[i][3]});save('walls',w)})();
+syncOpts();$('#menu').classList.add('on');resize();requestAnimationFrame(loop);
+window.__trace={G,CFG,ZONES,CHK,px,startGame,goHome,onTouch};
+</script>
+<script src="/tuio-pointer.js"></script>
+</body>
+</html>

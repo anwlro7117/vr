@@ -22,7 +22,7 @@ const LEVELS := [
 	{"name": "3단계 나무", "sub": "1~3학년 · 만 원까지", "bills": [1000, 5000, 10000], "max": 50000,
 	 "show_total": false, "easy_hint": false, "equal": true,
 	 "modes": ["count", "pay", "compare", "change"]},
-	{"name": "4단계 숲", "sub": "3학년 이상 · 오만 원까지", "bills": [1000, 5000, 10000, 50000], "max": 150000,
+	{"name": "4단계 숲", "sub": "3학년 이상 · 만 원으로 큰 금액", "bills": [1000, 5000, 10000], "max": 100000,
 	 "show_total": false, "easy_hint": false, "equal": true,
 	 "modes": ["count", "pay", "compare", "change"]},
 ]

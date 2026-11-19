@@ -76,7 +76,7 @@ const LIMITS := [
 	[[1000, 2, 6]],
 	[[5000, 0, 3], [1000, 0, 5]],
 	[[10000, 0, 3], [5000, 0, 2], [1000, 0, 5]],
-	[[50000, 0, 2], [10000, 0, 4], [5000, 0, 1], [1000, 0, 4]],
+	[[10000, 2, 7], [5000, 0, 1], [1000, 0, 4]],
 ]
 
 func gen_bundle(minn := 2, maxn := 10) -> Array:
@@ -159,8 +159,8 @@ func make_question(md: String) -> Dictionary:
 					if price % 10000 == 0:
 						price -= 1000
 				_:
-					unit = 50000 if randf() < 0.55 else 10000
-					price = randi_range(6, 95) * 1000
+					unit = 10000
+					price = randi_range(11, 95) * 1000
 					if price % unit == 0:
 						price -= 1000
 			var paid: int = int(ceil(price / float(unit))) * unit

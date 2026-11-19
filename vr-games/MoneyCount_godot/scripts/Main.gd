@@ -281,9 +281,9 @@ func _spawn_deco() -> void:
 		if is_instance_valid(d):
 			d.queue_free()
 	deco.clear()
-	var ks := [1000, 5000, 10000, 50000]
+	var ks := [1000, 5000, 10000]
 	for i in 7:
-		var bn := BillNode.new().setup(ks[i % 4], randf_range(70, 110))
+		var bn := BillNode.new().setup(ks[i % 3], randf_range(70, 110))
 		bn.position = Vector2(randf_range(0, 1920), randf_range(300, 1000))
 		bn.rotation = randf_range(-0.6, 0.6)
 		bn.modulate.a = 0.35

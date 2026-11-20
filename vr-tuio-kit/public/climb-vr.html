@@ -41,6 +41,10 @@ canvas{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
     <button class="opt" data-k="lv" data-v="1">⛰️ 보통 산<small>돌 20개</small></button>
     <button class="opt" data-k="lv" data-v="2">🏔️ 높은 산<small>돌 30개 · 흔들 돌</small></button>
   </div>
+  <div class="row"><span class="lbl">벌레</span>
+    <button class="opt" data-k="bug" data-v="1">🐞 나와요<small>건드리면 쭈욱 미끄럼</small></button>
+    <button class="opt" data-k="bug" data-v="0">🚫 없어요<small>돌만 잡기</small></button>
+  </div>
   <button id="startBtn">출발! ▶</button>
 </section>
 <button id="homeBtn">🏠</button>
@@ -52,6 +56,7 @@ canvas{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
 //  정면 2명: 정면 벽 왼쪽 빨강 vs 오른쪽 파랑, 양옆 벽은 두 사람을 옆에서 비춤.
 //  세 벽 6명: 벽마다 2명. 먼저 오른 순서대로 메달.
 //  높은 산: 흔들 돌(금 간 돌)은 2.5초 안에 다음 돌을 안 잡으면 한 칸 미끄러짐.
+//  벌레: 딱정벌레(옆으로)·거미(위아래). 캐릭터 몸이나 손가락이 닿으면 2칸 미끄러짐, 2초 동안 무적.
 //  캐릭터: KayKit Character Pack Adventures (CC0). 손잡이는 벽 위쪽에만 (아래 1/4 센서 약함).
 // ======================================================================
 import * as THREE from 'three';
@@ -61,10 +66,11 @@ const $=s=>document.querySelector(s);
 const LS='climbvr.';
 function load(k,d){try{const v=localStorage.getItem(LS+k);return v==null?d:JSON.parse(v)}catch(e){return d}}
 function save(k,v){try{localStorage.setItem(LS+k,JSON.stringify(v))}catch(e){}}
-const CFG={mode:load('mode','duo'),lv:load('lv',0)};
+const CFG={mode:load('mode','duo'),lv:load('lv',0),bug:load('bug',1)};
 const WALLS=['left','front','right'];
 const FONT='Jua,"Malgun Gothic",sans-serif';
-const LV=[{n:12,tol:.16},{n:20,tol:.14},{n:30,tol:.12,shaky:true}];
+const LV=[{n:12,tol:.16,bugs:2,bv:.8},{n:20,tol:.14,bugs:4,bv:1},{n:30,tol:.12,shaky:true,bugs:6,bv:1.2}];
+const BUG_FALL=2,BUG_SAFE=2; // 벌레 건드리면 2칸 미끄러짐, 2초 무적
 const STEP=1.15,LANE_W=8;
 const COLORS=[['빨강','#ff4d5a'],['파랑','#2f8cff'],['초록','#2ec46b'],['노랑','#ffbf1f'],['보라','#a066ff'],['분홍','#ff6fb5']];
 const HEROES=['Knight','Rogue','Mage','Barbarian','Rogue','Knight'];
@@ -76,6 +82,7 @@ function tone(f,t0,d,type='triangle',v=.14,f2){const a=ac();if(!a)return;const o
 const NOTES=[523,587,659,784,880,1047,1175,1319];
 const sfx={grab(k){tone(NOTES[k%8],0,.14,'triangle',.16);tone(180,0,.06,'square',.06)},gold(){[1047,1319,1568,2093].forEach((f,i)=>tone(f,i*.06,.18,'sine',.12))},
   slip(){tone(500,0,.35,'sawtooth',.06,140)},win(){[523,659,784,1047,784,1047,1319].forEach((f,i)=>tone(f,i*.11,.28,'triangle',.14))},
+  bug(){tone(300,0,.12,'square',.1,120);tone(700,.1,.4,'sawtooth',.05,160)},
   go(){tone(784,0,.15,'square',.08);tone(1175,.15,.3,'square',.08)},tick(){tone(880,0,.08,'square',.06)},click(){tone(880,0,.06,'triangle',.1)}};
 function speak(t){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='ko-KR';u.rate=1.05;speechSynthesis.speak(u)}catch(e){}}
 
@@ -122,6 +129,50 @@ function makeHolds(lane){const L=LV[CFG.lv],hs=[];
   return hs}
 const ringTex=(()=>{const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');const gr=g.createRadialGradient(64,64,20,64,64,62);gr.addColorStop(0,'rgba(255,255,255,0)');gr.addColorStop(.6,'rgba(255,255,255,.9)');gr.addColorStop(1,'rgba(255,255,255,0)');g.fillStyle=gr;g.fillRect(0,0,128,128);return new THREE.CanvasTexture(c)})();
 
+// ---------------- 벌레 ----------------
+//  딱정벌레: 벽을 옆으로 왔다 갔다.  거미: 거미줄 타고 위아래로.
+const bugMats={red:new THREE.MeshStandardMaterial({color:'#e8322e',roughness:.35,flatShading:true}),
+  green:new THREE.MeshStandardMaterial({color:'#2fbf4a',roughness:.35,metalness:.3,flatShading:true}),
+  black:new THREE.MeshStandardMaterial({color:'#1d1b22',roughness:.6,flatShading:true}),
+  white:new THREE.MeshBasicMaterial({color:'#ffffff'}),thread:new THREE.MeshBasicMaterial({color:'#f4f4f4',transparent:true,opacity:.8})};
+function makeLegs(g,n,len,mat){const legs=[];for(let i=0;i<n;i++){const side=i<n/2?-1:1,j=i%(n/2);const piv=new THREE.Group();
+    piv.position.set(side*.1,(j-(n/4-.5))*.11,0);const leg=new THREE.Mesh(new THREE.CylinderGeometry(.018,.012,len,5),mat);leg.rotation.z=side*Math.PI/2;leg.position.x=side*len/2;piv.add(leg);
+    piv.rotation.z=side*(j-(n/4-.5))*-.35;piv.userData={side,j,base:piv.rotation.z};g.add(piv);legs.push(piv)}return legs}
+function makeBeetle(green){const g=new THREE.Group();
+  const shell=new THREE.Mesh(new THREE.SphereGeometry(.2,14,10),green?bugMats.green:bugMats.red);shell.scale.set(1,1.25,.6);g.add(shell);
+  const line=new THREE.Mesh(new THREE.BoxGeometry(.015,.48,.02),bugMats.black);line.position.z=.12;g.add(line);
+  if(!green)for(const [x,y] of [[-.09,.06],[.09,.06],[-.1,-.1],[.1,-.1],[0,-.18]]){const d=new THREE.Mesh(new THREE.SphereGeometry(.04,8,6),bugMats.black);d.position.set(x,y,.1);d.scale.z=.4;g.add(d)}
+  const head=new THREE.Mesh(new THREE.SphereGeometry(.1,10,8),bugMats.black);head.position.y=.25;head.scale.z=.7;g.add(head);
+  for(const x of [-.045,.045]){const e=new THREE.Mesh(new THREE.SphereGeometry(.03,8,6),bugMats.white);e.position.set(x,.3,.06);g.add(e);
+    const a=new THREE.Mesh(new THREE.CylinderGeometry(.008,.008,.18,4),bugMats.black);a.position.set(x*2.2,.4,0);a.rotation.z=-x*8;g.add(a)}
+  const legs=makeLegs(g,6,.2,bugMats.black);g.scale.setScalar(1.25);return {g,legs}}
+function makeSpider(){const g=new THREE.Group();
+  const ab=new THREE.Mesh(new THREE.SphereGeometry(.17,12,10),bugMats.black);ab.position.y=.12;ab.scale.set(1,1.15,.7);g.add(ab);
+  const mark=new THREE.Mesh(new THREE.SphereGeometry(.05,8,6),new THREE.MeshBasicMaterial({color:'#ff3b3b'}));mark.position.set(0,.12,.11);mark.scale.z=.3;g.add(mark);
+  const hd=new THREE.Mesh(new THREE.SphereGeometry(.1,10,8),bugMats.black);hd.position.y=-.08;g.add(hd);
+  for(const x of [-.04,.04]){const e=new THREE.Mesh(new THREE.SphereGeometry(.028,8,6),bugMats.white);e.position.set(x,-.13,.07);g.add(e);
+    const pu=new THREE.Mesh(new THREE.SphereGeometry(.013,6,4),bugMats.black);pu.position.set(x,-.14,.095);g.add(pu)}
+  const legs=makeLegs(g,8,.28,bugMats.black);
+  const th=new THREE.Mesh(new THREE.CylinderGeometry(.008,.008,1,4),bugMats.thread);g.add(th);g.scale.setScalar(1.3);return {g,legs,th}}
+function makeBugs(lane){const L=LV[CFG.lv],bs=[];if(!CFG.bug)return bs;
+  const y0=1.6+3*STEP,y1=1.6+(L.n-1)*STEP,n=L.bugs;
+  for(let i=0;i<n;i++){const y=y0+(y1-y0)*(n>1?i/(n-1):.5)+(Math.random()-.5)*STEP*.6;
+    const spider=CFG.lv>0&&i%2===1,b=spider?makeSpider():makeBeetle(Math.random()<.4);
+    const o={...b,spider,lane:lane.i,base:{x:lane.x+(spider?(Math.random()-.5)*1.2:0),y},ph:Math.random()*6.28,v:L.bv*(.85+Math.random()*.3),off:0,x:0,y:0};
+    b.g.position.set(o.base.x,y,.45);scene.add(b.g);bs.push(o)}
+  return bs}
+function updateBug(o,dt,t){
+  if(o.off>0){o.off-=dt;o.g.position.x+=o.fx*dt;o.g.position.y+=o.fy*dt;o.fy-=12*dt;o.g.rotation.z+=dt*12;
+    if(o.off<=0){o.g.visible=false;o.gone=3}return}
+  if(o.gone>0){o.gone-=dt;if(o.gone<=0){o.g.visible=true;o.g.rotation.z=0}else return}
+  let x,y,ang;
+  if(o.spider){const k=Math.sin(t*o.v*.9+o.ph);x=o.base.x;y=o.base.y+k*1.3;ang=0;
+    o.th.scale.y=12/o.g.scale.y;o.th.position.y=6/o.g.scale.y+.25;}
+  else{const k=Math.sin(t*o.v*.5+o.ph);x=o.base.x+k*1.8;y=o.base.y+Math.sin(t*1.7+o.ph)*.08;ang=Math.cos(t*o.v*.5+o.ph)>0?-Math.PI/2:Math.PI/2}
+  o.x=x;o.y=y;o.g.position.set(x,y,.45);o.g.rotation.z+=(ang-o.g.rotation.z)*Math.min(1,dt*8);
+  for(const p of o.legs){const u=p.userData;p.rotation.z=u.base+Math.sin(t*14+u.j*2+(u.side>0?1.5:0))*.3}}
+function knockBug(o,l){o.off=.9;o.fx=(o.x<l.x?-1:1)*4;o.fy=5}
+
 // ---------------- 캐릭터 ----------------
 const loader=new GLTFLoader();const GLB={},PROPS={};
 const HIDE=/Knife|Crossbow|Throwable|Sword|Shield|Axe|Staff|Wand|Spellbook|Mug|Arrow|Quiver/i;
@@ -161,13 +212,13 @@ function computeRects(){const walls=load('walls',null),r={};
   const w=W/3;WALLS.forEach((k,i)=>r[k]={x:Math.round(i*w),y:0,w:Math.round(w),h:H});return r}
 const G={on:false,t:0,phase:'menu',rank:0,msg:null,msgT:0};
 const built={cliffs:[],objs:[]};
-function clearWorld(){for(const l of lanes){l.holds.forEach(h=>scene.remove(h.m));scene.remove(l.hero.m,l.ring,l.top)}built.cliffs.forEach(c=>scene.remove(c));built.cliffs=[];lanes.length=0}
+function clearWorld(){for(const l of lanes){l.holds.forEach(h=>scene.remove(h.m));(l.bugs||[]).forEach(b=>scene.remove(b.g));scene.remove(l.hero.m,l.ring,l.top)}built.cliffs.forEach(c=>scene.remove(c));built.cliffs=[];lanes.length=0}
 function laneRects(){const L=[];const walls=CFG.mode==='six'?WALLS:['front'];for(const k of walls){const r=RECT[k];L.push({x:r.x,y:r.y,w:r.w/2,h:r.h},{x:r.x+r.w/2,y:r.y,w:r.w/2,h:r.h})}return L}
 function setup(){
   clearWorld();const n=CFG.mode==='six'?6:2,L=LV[CFG.lv],height=1.6+L.n*STEP+.2;
   for(let i=0;i<n;i++){const x=(i-(n-1)/2)*LANE_W;const lane={i,x,k:0,y:0,ty:0,reach:1,done:false,place:0,slip:0,grabT:0,stars:0};
     built.cliffs.push(makeCliff(x,height));
-    lane.holds=makeHolds(lane);
+    lane.holds=makeHolds(lane);lane.bugs=makeBugs(lane);lane.bugT=-9;
     lane.hero=makeHero(HEROES[i]);lane.hero.m.position.set(x,0,.9);lane.hero.m.rotation.y=Math.PI;scene.add(lane.hero.m);
     const ring=new THREE.Sprite(new THREE.SpriteMaterial({map:ringTex,color:COLORS[i][1],transparent:true,depthWrite:false}));ring.scale.set(1.1,1.1,1);scene.add(ring);lane.ring=ring;
     const top=new THREE.Group();const ch=PROPS.chest_gold.clone(true);ch.scale.setScalar(.9);top.add(ch);const co=PROPS.coin_stack_large.clone(true);co.position.set(1.2,0,.2);co.scale.setScalar(.7);top.add(co);
@@ -186,6 +237,10 @@ function grab(l){if(l.done||G.phase!=='play')return;const h=l.holds[l.k];
     if(CFG.mode==='duo'){G.phase='end';G.endT=G.t;banner(`${nm} 승리! 🏆`,`꼭대기 보물 도착!`);speak(`${nm} 승리! 꼭대기 도착!`)}
     else{speak(`${nm} ${l.place}등!`);if(G.rank>=lanes.length){G.phase='end';G.endT=G.t;banner('모두 꼭대기! 🎉','다 같이 최고!')}}}}
 function slip(l){if(l.k<=0)return;l.k--;l.ty=l.k*STEP;l.slip=G.t;sfx.slip()}
+// 벌레에 닿음 → BUG_FALL칸 미끄러짐
+function bugHit(l,o){if(l.done||G.t-l.bugT<BUG_SAFE)return;l.bugT=G.t;knockBug(o,l);sfx.bug();
+  const n=Math.min(BUG_FALL,l.k);if(n>0){l.k-=n;l.ty=l.k*STEP;l.grabT=G.t}
+  FX.push(...Array.from({length:12},()=>({lane:l.i,x:o.x,y:o.y,vx:(Math.random()-.5)*4,vy:Math.random()*3,t:0,c:'#7cff6b'})))}
 const FX=[];
 function burst(l,h){for(let i=0;i<10;i++)FX.push({lane:l.i,x:h.x,y:h.y,vx:(Math.random()-.5)*3,vy:Math.random()*3,t:0,c:h.gold?'#ffd23f':'#ffffff'})}
 function banner(t,s){G.msg={t,s};G.msgT=G.t}
@@ -195,6 +250,8 @@ let LR=[];
 const _p=new THREE.Vector3();
 function onDown(x,y){if(!G.on||G.phase!=='play')return;ac();
   for(let i=0;i<lanes.length;i++){const r=LR[i],l=lanes[i];if(!r||x<r.x||x>=r.x+r.w||y<r.y||y>=r.y+r.h||l.done)continue;
+    let hitBug=null;for(const o of l.bugs){if(o.off>0||o.gone>0)continue;_p.set(o.x,o.y,.45).project(l.cam);if(Math.hypot(x-(r.x+(_p.x+1)/2*r.w),y-(r.y+(1-_p.y)/2*r.h))<r.h*.07){hitBug=o;break}}
+    if(hitBug){bugHit(l,hitBug);continue}
     const h=l.holds[l.k];_p.copy(h.m.position).project(l.cam);const sx=r.x+(_p.x+1)/2*r.w,sy=r.y+(1-_p.y)/2*r.h;
     if(Math.hypot(x-sx,y-sy)<LV[CFG.lv].tol*r.h*1.6)grab(l);else l.miss=G.t}}
 document.getElementById('cv').addEventListener('pointerdown',e=>onDown(e.clientX,e.clientY));
@@ -210,8 +267,11 @@ function update(dt){
     l.y+=(l.ty-l.y)*Math.min(1,dt*7);
     // 흔들 돌
     if(G.phase==='play'&&!l.done&&l.k>0){const h=l.holds[l.k-1];if(h.shaky){h.m.rotation.z=Math.sin(G.t*30)*.08*Math.min(1,(G.t-l.grabT));if(G.t-l.grabT>2.5){h.m.position.y-=dt*8;if(!h.fell){h.fell=1;slip(l)}}}}
+    for(const o of l.bugs){updateBug(o,dt,G.t);
+      if(G.phase==='play'&&!l.done&&!(o.off>0)&&!(o.gone>0)&&Math.abs(o.x-l.x)<.55&&o.y>l.y+.1&&o.y<l.y+1.9)bugHit(l,o)}
     const hero=l.hero,hy=l.done&&Math.abs(l.ty-l.y)<.1?l.height+.92:l.y+.2;
     hero.m.position.set(l.x+(l.done?0:l.reach*.12),l.done?l.height+.92:hy,l.done?-.4:.75);
+    hero.m.visible=!(G.on&&G.t-l.bugT<BUG_SAFE&&Math.sin(G.t*30)>0);
     if(l.done){hero.m.rotation.y=0;playA(hero,'Cheer');hero.mix.update(dt)}
     else{hero.m.rotation.y=Math.PI;playA(hero,'Unarmed_Idle');hero.mix.update(dt);climbPose(hero,l.reach,G.t)}
     // 다음 돌 반짝
@@ -246,6 +306,7 @@ function overlay(){
     txt(`${nm}  ${l.k} / ${l.holds.length}  ${'⭐'.repeat(l.stars)}`,r.x+r.w/2,r.y+r.h*.07,r.h*.045,'#fff');
     if(l.done)txt(CFG.mode==='six'?['','🥇 1등','🥈 2등','🥉 3등','4등','5등','6등'][l.place]:'🏆',r.x+r.w/2,r.y+r.h*.3,r.h*.1,'#fff');
     if(G.t-l.slip<1)txt('미끄러졌어요!',r.x+r.w/2,r.y+r.h*.55,r.h*.05,'#ffe08a');
+    if(G.on&&G.t-l.bugT<1.4)txt('🐞 벌레다! 쭈욱~',r.x+r.w/2,r.y+r.h*.5,r.h*.055,'#b6ff9e');
     // 효과
     for(const f of FX){if(f.lane!==i)continue;_wp.set(f.x,f.y,.4).project(l.cam);ctx.fillStyle=f.c;ctx.globalAlpha=1-f.t/.8;ctx.beginPath();ctx.arc(r.x+(_wp.x+1)/2*r.w,r.y+(1-_wp.y)/2*r.h,r.h*.008,0,6.283);ctx.fill();ctx.globalAlpha=1}
     // 화면 경계
@@ -268,7 +329,7 @@ $('#startBtn').addEventListener('click',startGame);$('#homeBtn').addEventListene
   const w={};WALLS.forEach((k,i)=>w[k]={x:p[i][0],y:p[i][1],w:p[i][2],h:p[i][3]});save('walls',w)})();
 syncOpts();resize();
 loadAll().then(()=>{$('#loading').remove();goHome();requestAnimationFrame(loop)}).catch(e=>{$('#loading').textContent='불러오기 실패: '+e.message;console.error(e)});
-window.__climb={G,CFG,lanes,grab,startGame,goHome,LR:()=>LR};
+window.__climb={G,CFG,lanes,grab,bugHit,startGame,goHome,LR:()=>LR};
 </script>
 <script src="/tuio-pointer.js"></script>
 </body>

@@ -92,6 +92,12 @@ canvas#cv{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
       <button class="opt" data-k="view" data-v="1">🤠 탐험가 보기<small>뒤에서 캐릭터를 봐요</small></button>
       <button class="opt" data-k="view" data-v="0">👀 내 눈으로<small>팔이 보여요</small></button>
     </div>
+    <div class="row"><span class="lbl">탐험가</span>
+      <button class="opt" data-k="hero" data-v="0">🗡️ 도적</button>
+      <button class="opt" data-k="hero" data-v="1">🛡️ 기사</button>
+      <button class="opt" data-k="hero" data-v="2">🪄 마법사</button>
+      <button class="opt" data-k="hero" data-v="3">🪓 전사</button>
+    </div>
     <div class="row"><span class="lbl">시작 단계</span>
       <button class="opt" data-k="st" data-v="0">1 정글</button>
       <button class="opt" data-k="st" data-v="1">2 동굴</button>
@@ -119,13 +125,15 @@ canvas#cv{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
 <div id="fade"></div>
 <script>window.TUIO_DWELL_MS=4000;</script>
 <script src="/tuio-pointer.js"></script>
+<script type="importmap">{"imports":{"three":"/lib/three.module.min.js"}}</script>
 <script type="module">
-import * as THREE from '/lib/three.module.min.js';
+import * as THREE from 'three';
+import {GLTFLoader} from '/lib/jsm/loaders/GLTFLoader.js';
 const $=s=>document.querySelector(s);
 const LS='templevr.';
 function load(k,d){try{const v=localStorage.getItem(LS+k);return v==null?d:JSON.parse(v)}catch(e){return d}}
 function save(k,v){try{localStorage.setItem(LS+k,JSON.stringify(v))}catch(e){}}
-const CFG=Object.assign({lv:0,help:1,st:0,view:1},load('cfg',{}));
+const CFG=Object.assign({lv:0,help:1,st:0,view:1,hero:0},load('cfg',{}));
 const rnd=(a,b)=>a+Math.random()*(b-a),clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),pick=a=>a[Math.random()*a.length|0];
 
 /* ---------- 소리 ---------- */
@@ -226,7 +234,7 @@ const segs=[];
     for(const s of [-1,1]){const w=new THREE.Mesh(gWall,M.wall);w.rotation.y=-s*Math.PI/2;w.position.set(s*CW,CH/2,-SEG/2);g.add(w);
       const p=new THREE.Mesh(gP,M.pillar);p.position.set(s*(CW-.2),CH/2,0);g.add(p);
       if(Math.random()<.45){const q=new THREE.Mesh(gPl,new THREE.MeshStandardMaterial({map:pick(plaqueTex),roughness:.9,color:0xb0a080}));q.userData.plaque=1;q.rotation.y=-s*Math.PI/2;q.position.set(s*(CW-.02),rnd(2.2,3.4),-rnd(1.5,4.5));g.add(q)}
-      if(i%2===0){const tz=-SEG/2,st=new THREE.Mesh(new THREE.CylinderGeometry(.06,.04,.5,8),M.wood);st.position.set(s*(CW-.15),2.6,tz);st.rotation.z=s*.35;g.add(st);
+      if(i%2===0){const tz=-SEG/2,st=new THREE.Mesh(new THREE.CylinderGeometry(.06,.04,.5,8),M.wood);st.position.set(s*(CW-.15),2.6,tz);st.rotation.z=s*.35;st.userData.stick=s;g.add(st);
         const fl=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,blending:THREE.AdditiveBlending,depthWrite:false,transparent:true,fog:false}));fl.position.set(s*(CW-.25),2.95,tz);fl.scale.set(.6,.8,1);g.add(fl);flames.push({fl,ph:Math.random()*9})}}
     const b=new THREE.Mesh(gBeam,M.pillar);b.position.set(0,CH-.25,0);g.add(b);
     g.position.z=-i*SEG+SEG;scene.add(g);segs.push(g)}}
@@ -331,6 +339,11 @@ const fpArms=[];
     const h=new THREE.Mesh(new THREE.SphereGeometry(.085,12,10),skin);h.position.set(0,.04,-.3);h.scale.set(1,.8,1.1);g.add(h);
     g.userData.base=new THREE.Vector3(sd*.24,-.36,-.6);g.position.copy(g.userData.base);cams.front.add(g);fpArms.push(g)}}
 function animHero(dt){const run=P.v>1&&G.phase!=='dead',{legs,arms}=hero.userData,sw=Math.sin(P.bob);
+  if(HM.model){animModel(dt,run);hero.position.set(P.x,P.y,P.z);ring.position.set(P.x,.02,P.z);heroShadow.position.set(P.x,.015,P.z);heroShadow.scale.setScalar(1/(1+P.y));ring.material.opacity=.45+Math.sin(clock*6)*.25;
+    const blink=P.inv>0&&Math.floor(P.inv*10)%2===1;hero.visible=view3()&&!blink;ring.visible=hero.visible;heroShadow.visible=view3();hero.rotation.set(0,0,(P.x-LANES[P.lane])*.12);
+    const fp=!view3()&&G.phase!=='home';fpArms.forEach((g,i)=>{g.visible=fp&&!blink;const b=g.userData.base,s=i?-sw:sw;
+      if(P.y>0)g.position.set(b.x*1.3,b.y+.18,b.z-.05);else if(run)g.position.set(b.x,b.y+s*.05+Math.abs(s)*.02,b.z+s*.16);else g.position.set(b.x,b.y-.04+Math.sin(clock*2+i)*.01,b.z);
+      g.rotation.set(run?s*.25:0,0,(i?-1:1)*(P.y>0?.5:.1))});return}
   const third=view3()&&G.phase!=='home'||G.phase==='home';
   const blink=P.inv>0&&Math.floor(P.inv*10)%2===1;
   hero.visible=third&&view3()&&!blink;ring.visible=hero.visible;heroShadow.visible=view3();
@@ -346,6 +359,45 @@ function animHero(dt){const run=P.v>1&&G.phase!=='dead',{legs,arms}=hero.userDat
     if(P.y>0)g.position.set(b.x*1.3,b.y+.18,b.z-.05);else if(run)g.position.set(b.x,b.y+s*.05+Math.abs(s)*.02,b.z+s*.16);else g.position.set(b.x,b.y-.04+Math.sin(clock*2+i)*.01,b.z);
     g.rotation.set(run?s*.25:0,0,(i?-1:1)*(P.y>0?.5:.1))})}
 
+/* ---------- KayKit 3D 에셋 (CC0) ---------- */
+const GL=new GLTFLoader();
+const HEROES=['Rogue','Knight','Mage','Barbarian'];
+const HM={model:null,mixer:null,acts:{},cur:null,idx:-1,cache:{}};
+const HIDE=/Knife|Crossbow|Throwable|Sword|Shield|Axe|Staff|Wand|Spellbook|Mug|Arrow|Quiver/i;
+function loadHero(i){
+  if(HM.idx===i)return;HM.idx=i;const name=HEROES[i]||HEROES[0];
+  const use=gl=>{if(HM.idx!==i)return;
+    if(HM.model)hero.remove(HM.model);
+    const m=gl.scene;m.traverse(o=>{if(o.isMesh||o.isSkinnedMesh){o.castShadow=true;o.frustumCulled=false;if(HIDE.test(o.name))o.visible=false}});
+    const bb=new THREE.Box3().setFromObject(m),h=bb.max.y-bb.min.y||1;m.scale.setScalar(1.85/h);m.rotation.y=Math.PI;
+    hero.children.forEach(c=>{if(c!==m)c.visible=false});hero.add(m);
+    HM.model=m;HM.mixer=new THREE.AnimationMixer(m);HM.acts={};HM.cur=null;
+    for(const c of gl.animations)HM.acts[c.name]=HM.mixer.clipAction(c);
+    for(const n of ['Death_A','Jump_Start'])if(HM.acts[n]){HM.acts[n].setLoop(THREE.LoopOnce);HM.acts[n].clampWhenFinished=true}};
+  if(HM.cache[name])use(HM.cache[name]);else GL.load(`assets/kaykit-chars/${name}.glb`,gl=>{HM.cache[name]=gl;use(gl)},undefined,e=>console.warn('hero',e))}
+function playA(n,ts=1){const a=HM.acts[n];if(!a)return;a.timeScale=ts;if(HM.cur===a)return;if(HM.cur)HM.cur.fadeOut(.18);a.reset().fadeIn(.18).play();HM.cur=a}
+function animModel(dt,run){
+  if(G.phase==='dead')playA('Death_A');
+  else if(G.phase==='end')playA('Cheer');
+  else if(P.y>0)playA('Jump_Idle');
+  else if(G.phase==='home')playA('Running_A',.75);
+  else if(run)playA('Running_A',Math.max(.8,P.v/6));
+  else playA(G.phase==='door'?'Unarmed_Idle':'Idle');
+  HM.mixer.update(dt)}
+// 신전 소품: 벽 횃불, 깃발, 통·상자, 보물상자
+const PROPS={};
+const PN=['torch_mounted','barrel_small','barrel_large','box_small','box_stacked','crates_stacked','rubble_half','banner_patternA_red','banner_patternC_yellow','banner_thin_green','chest_gold','coin_stack_large','candle_triple','keg'];
+Promise.all(PN.map(n=>GL.loadAsync(`assets/dungeon/${n}.glb`).then(g=>{g.scene.traverse(o=>{if(o.isMesh){o.castShadow=o.receiveShadow=true}});PROPS[n]=g.scene}))).then(decorate).catch(e=>console.warn('props',e));
+function prop(n,x,y,z,ry,s){const o=PROPS[n].clone(true);o.position.set(x,y,z);o.rotation.y=ry;o.scale.setScalar(s);return o}
+function decorate(){
+  segs.forEach((g,i)=>{
+    g.children.slice().forEach(c=>{if(c.userData.stick){const s=c.userData.stick;c.visible=false;g.add(prop('torch_mounted',s*CW,2.2,c.position.z,-s*Math.PI/2,.9))}});
+    for(const s of [-1,1]){
+      if(Math.random()<.5){const n=['barrel_small','box_small','rubble_half','keg','candle_triple','box_stacked','crates_stacked','barrel_large'][Math.random()*8|0];
+        const sc=n==='box_stacked'||n==='crates_stacked'||n==='barrel_large'?.45:.6;g.add(prop(n,s*(CW-.42),0,-rnd(1.2,4.8),Math.random()*6,sc))}
+      if(Math.random()<.22){const b=prop(['banner_patternA_red','banner_patternC_yellow','banner_thin_green'][Math.random()*3|0],s*CW,.6,-rnd(2,4),-s*Math.PI/2,.6);b.userData.plaque=1;g.add(b)}}});
+  const ch=prop('chest_gold',1.3,0,.4,-.5,.8);idol.add(ch);idol.add(prop('coin_stack_large',-1.2,0,.5,.3,.8));idol.add(prop('coin_stack_large',1.9,0,-.4,1,.6));
+}
 /* ---------- 게임 상태 ---------- */
 const P={z:0,lane:1,x:0,y:0,vy:0,inv:0,hearts:3,gems:0,gems0:0,v:0,shake:0,bob:0};
 const G={phase:'home',si:0,t:0,obs:[],gems:[],doorZ:-200,stopZ:-194,chase:24,lastTap:{left:0,right:0,front:0}};
@@ -483,12 +535,12 @@ function resize(){W=innerWidth;H=innerHeight;renderer.setSize(W,H,false);relayou
 addEventListener('resize',resize);
 let lastPos='';setInterval(()=>{const p=screenX+','+screenY;if(p!==lastPos){lastPos=p;relayout()}},1000);
 function syncOpts(){document.querySelectorAll('.opt').forEach(b=>b.classList.toggle('sel',String(CFG[b.dataset.k])===b.dataset.v))}
-document.querySelectorAll('.opt').forEach(b=>b.addEventListener('click',()=>{ac();CFG[b.dataset.k]=+b.dataset.v;save('cfg',CFG);syncOpts();sfx.tick()}));
+document.querySelectorAll('.opt').forEach(b=>b.addEventListener('click',()=>{ac();CFG[b.dataset.k]=+b.dataset.v;save('cfg',CFG);syncOpts();sfx.tick();if(b.dataset.k==='hero')loadHero(CFG.hero)}));
 $('#startBtn').addEventListener('click',start);$('#againBtn').addEventListener('click',start);$('#retryBtn').addEventListener('click',retry);
 ['#toHome1','#toHome2','#homeBtn'].forEach(s=>$(s).addEventListener('click',goHome));
 document.addEventListener('contextmenu',e=>e.preventDefault());
 Object.assign(window,{CFG,G,P,STAGES,beginStage,onTouch,lightGlyph,glyphs,THREE,__cams:cams,__R:()=>RECTS});
-resize();syncOpts();goHome();requestAnimationFrame(loop);
+resize();syncOpts();goHome();loadHero(+CFG.hero||0);requestAnimationFrame(loop);
 </script>
 </body>
 </html>

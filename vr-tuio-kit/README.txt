@@ -117,6 +117,10 @@
      왼쪽 vs 오른쪽: 빗자루로 먼저 닦는 팀 승리, 정면 벽은 점수 막대.
      먼지: 얇게 / 보통 / 두껍게. 벽 가운데 띠·아래쪽은 센서가 약해 먼지를 얇게 깔았다.
      글꼴: public/fonts/Galmuri11-Bold.woff2 (갈무리, SIL OFL)
+  18_moon3d_game.bat → 달 청소부 3D (벽 3면). 놀이 방법은 17번과 같고 그림이 3D 달 기지.
+     다 닦으면 기지가 움직임: 착륙선 발사·우주 트럭 배달·바람 발전소·광산 드릴·달 기지 마을·착륙선 도착.
+     3D 모델: public/assets/spacebits (KayKit Space Base Bits, CC0). 글꼴: public/fonts/Jua.woff2 (SIL OFL)
+     3D 라서 그래픽카드를 더 씀. 느리면 17번(도트판)을 쓴다.
   7_baseball_game.bat → 무지개 야구왕 (3D). 시작 화면에서 투수 / 타자 고른다.
     투수·타자 모두 왼쪽 또는 오른쪽 벽에서 한다 (시작 화면 "플레이 벽"에서 고름). 정면 = 중계 화면 + 점수판.
     투수: 그 벽에 포수·타자·스트라이크 존(3×3). 공을 던지거나 손으로 찍은 곳으로 공이 간다.
@@ -155,6 +159,7 @@
   public/lava-vr.html   용암 바닥 탈출 (바닥 2면)
   public/trace-vr.html  숫자 따라쓰기 (벽 3면)
   public/moon-vr.html   달 청소부 (벽 3면)
+  public/moon3d-vr.html 달 청소부 3D (벽 3면)
   public/baseball-duo.html 야구왕 2인 (정면 반반, 안에 baseball-vr 두 개)
   public/tuio-pointer.js 창 하나 게임용: TUIO를 진짜 터치처럼 넣어 줌 (게임 코드 수정 없이 한 줄 추가)
   public/          관제(operator) · 화면 테스트(display) · 모니터 번호(identify) · tuio-client.js

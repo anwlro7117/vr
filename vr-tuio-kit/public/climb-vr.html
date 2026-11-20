@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>벽 오르기</title>
+<style>
+@font-face{font-family:Jua;src:url(fonts/Jua.woff2) format('woff2');font-display:block}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:none}
+html,body{height:100%;overflow:hidden;background:#7ec8ff;font-family:Jua,"Malgun Gothic",sans-serif}
+button{font-family:inherit;border:none;cursor:pointer;color:inherit}
+canvas{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
+#menu{position:fixed;display:none;flex-direction:column;align-items:center;gap:2.6vh;padding-top:5vh;z-index:3;background:linear-gradient(#5fb6ff,#c9ecff 70%,#8fd36b 70%,#6cbf4c)}
+#menu.on{display:flex}
+#menu h1{font-size:10vh;color:#fff;text-shadow:0 .8vh 0 #2c6aa8,0 1.6vh 3vh #0005;font-weight:400;text-align:center;line-height:1.1}
+#menu h1 small{display:block;font-size:3vh;color:#14406b;text-shadow:none;margin-top:1.2vh}
+.row{display:flex;gap:1.6vh;align-items:center}
+.lbl{font-size:3vh;color:#14406b;min-width:9vh;text-align:right;white-space:nowrap}
+.opt{font-size:3.2vh;padding:1.3vh 3vh;border-radius:5vh;background:#ffffffcc;color:#14406b;white-space:nowrap;box-shadow:0 .6vh 0 #0003}
+.opt.sel{background:#ffd23f;color:#5a3200;transform:translateY(-.3vh)}
+.opt small{display:block;font-size:1.9vh;opacity:.8}
+#startBtn{font-size:5.6vh;padding:2vh 10vh;border-radius:7vh;background:#ff7a2f;color:#fff;box-shadow:0 1vh 0 #a54200;margin-top:1vh}
+#homeBtn{position:fixed;width:7vh;height:7vh;border-radius:50%;background:#ffffffdd;font-size:3.4vh;display:none;z-index:4}
+#homeBtn.on{display:block}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:6vh;z-index:9;background:#5fb6ff}
+</style>
+<script type="importmap">{"imports":{"three":"/lib/three.module.min.js"}}</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="cv"></canvas>
+<div id="loading">⛰️ 산 준비 중…</div>
+<section id="menu">
+  <h1>⛰️ 벽 오르기 🧗<small>빛나는 돌을 톡! 톡! 잡고 꼭대기 보물까지!</small></h1>
+  <div class="row"><span class="lbl">인원</span>
+    <button class="opt" data-k="mode" data-v="duo">🔴🔵 정면 2명<small>누가 먼저 오르나</small></button>
+    <button class="opt" data-k="mode" data-v="six">🌈 세 벽 6명<small>벽마다 2명씩</small></button>
+  </div>
+  <div class="row"><span class="lbl">산 높이</span>
+    <button class="opt" data-k="lv" data-v="0">🌱 낮은 산<small>돌 12개</small></button>
+    <button class="opt" data-k="lv" data-v="1">⛰️ 보통 산<small>돌 20개</small></button>
+    <button class="opt" data-k="lv" data-v="2">🏔️ 높은 산<small>돌 30개 · 흔들 돌</small></button>
+  </div>
+  <button id="startBtn">출발! ▶</button>
+</section>
+<button id="homeBtn">🏠</button>
+<script>window.TUIO_DWELL_MS=5000;</script>
+<script type="module">
+// ======================================================================
+// 벽 오르기 — VR실 벽 3면 (launch.js span climb-vr.html)  · PEAK 착안
+//  한 사람 = 벽 반쪽. 빛나는 돌(손잡이)을 톡 누르면 캐릭터가 한 칸 올라감. 꼭대기 보물 상자까지.
+//  정면 2명: 정면 벽 왼쪽 빨강 vs 오른쪽 파랑, 양옆 벽은 두 사람을 옆에서 비춤.
+//  세 벽 6명: 벽마다 2명. 먼저 오른 순서대로 메달.
+//  높은 산: 흔들 돌(금 간 돌)은 2.5초 안에 다음 돌을 안 잡으면 한 칸 미끄러짐.
+//  캐릭터: KayKit Character Pack Adventures (CC0). 손잡이는 벽 위쪽에만 (아래 1/4 센서 약함).
+// ======================================================================
+import * as THREE from 'three';
+import {GLTFLoader} from '/lib/jsm/loaders/GLTFLoader.js';
+import * as SkeletonUtils from '/lib/jsm/utils/SkeletonUtils.js';
+const $=s=>document.querySelector(s);
+const LS='climbvr.';
+function load(k,d){try{const v=localStorage.getItem(LS+k);return v==null?d:JSON.parse(v)}catch(e){return d}}
+function save(k,v){try{localStorage.setItem(LS+k,JSON.stringify(v))}catch(e){}}
+const CFG={mode:load('mode','duo'),lv:load('lv',0)};
+const WALLS=['left','front','right'];
+const FONT='Jua,"Malgun Gothic",sans-serif';
+const LV=[{n:12,tol:.16},{n:20,tol:.14},{n:30,tol:.12,shaky:true}];
+const STEP=1.15,LANE_W=8;
+const COLORS=[['빨강','#ff4d5a'],['파랑','#2f8cff'],['초록','#2ec46b'],['노랑','#ffbf1f'],['보라','#a066ff'],['분홍','#ff6fb5']];
+const HEROES=['Knight','Rogue','Mage','Barbarian','Rogue','Knight'];
+
+// ---------------- 소리 ----------------
+let AC=null;
+function ac(){if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}}if(AC&&AC.state==='suspended')AC.resume();return AC}
+function tone(f,t0,d,type='triangle',v=.14,f2){const a=ac();if(!a)return;const o=a.createOscillator(),g=a.createGain(),T=a.currentTime+t0;o.type=type;o.frequency.setValueAtTime(f,T);if(f2)o.frequency.exponentialRampToValueAtTime(f2,T+d);g.gain.setValueAtTime(v,T);g.gain.exponentialRampToValueAtTime(.001,T+d);o.connect(g);g.connect(a.destination);o.start(T);o.stop(T+d+.02)}
+const NOTES=[523,587,659,784,880,1047,1175,1319];
+const sfx={grab(k){tone(NOTES[k%8],0,.14,'triangle',.16);tone(180,0,.06,'square',.06)},gold(){[1047,1319,1568,2093].forEach((f,i)=>tone(f,i*.06,.18,'sine',.12))},
+  slip(){tone(500,0,.35,'sawtooth',.06,140)},win(){[523,659,784,1047,784,1047,1319].forEach((f,i)=>tone(f,i*.11,.28,'triangle',.14))},
+  go(){tone(784,0,.15,'square',.08);tone(1175,.15,.3,'square',.08)},tick(){tone(880,0,.08,'square',.06)},click(){tone(880,0,.06,'triangle',.1)}};
+function speak(t){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='ko-KR';u.rate=1.05;speechSynthesis.speak(u)}catch(e){}}
+
+// ---------------- 3D 장면 ----------------
+const renderer=new THREE.WebGLRenderer({canvas:$('#gl'),antialias:true});renderer.setPixelRatio(1);renderer.setScissorTest(true);
+renderer.shadowMap.enabled=true;
+const scene=new THREE.Scene();scene.background=new THREE.Color('#8fd0ff');scene.fog=new THREE.Fog('#bfe6ff',30,140);
+scene.add(new THREE.HemisphereLight('#ffffff','#7a8f6a',1.4));
+const sun=new THREE.DirectionalLight('#fff3d6',2.2);sun.position.set(-20,40,30);scene.add(sun);
+// 하늘 그라데이션 공
+{const g=new THREE.SphereGeometry(300,32,16),c=[];const p=g.attributes.position;for(let i=0;i<p.count;i++){const y=p.getY(i)/300,k=Math.max(0,y);const a=new THREE.Color('#d9f1ff').lerp(new THREE.Color('#3f9df0'),Math.pow(k,.6));c.push(a.r,a.g,a.b)}
+  g.setAttribute('color',new THREE.Float32BufferAttribute(c,3));scene.add(new THREE.Mesh(g,new THREE.MeshBasicMaterial({vertexColors:true,side:THREE.BackSide,fog:false})))}
+// 먼 산
+{const m=new THREE.MeshStandardMaterial({color:'#7d9bb8',flatShading:true,roughness:1});for(let i=0;i<26;i++){const h=20+Math.random()*40,c=new THREE.Mesh(new THREE.ConeGeometry(h*.8,h,6+Math.random()*3|0),m);c.position.set(-120+i*12+Math.random()*8,h/2-6,-70-Math.random()*40);c.rotation.y=Math.random();scene.add(c)}}
+// 구름
+const clouds=[];{const m=new THREE.MeshStandardMaterial({color:'#ffffff',flatShading:true,roughness:1,emissive:'#ffffff',emissiveIntensity:.15});
+  for(let i=0;i<40;i++){const g=new THREE.Group();for(let j=0;j<5;j++){const s=new THREE.Mesh(new THREE.IcosahedronGeometry(1.2+Math.random()*1.4,1),m);s.position.set(j*1.6-3.2,Math.random()*.8,Math.random()*1.2);g.add(s)}
+    g.position.set(-40+Math.random()*120,4+Math.random()*44,-8-Math.random()*30);g.userData.v=.3+Math.random()*.6;scene.add(g);clouds.push(g)}}
+// 풀밭
+{const g=new THREE.Mesh(new THREE.PlaneGeometry(400,200,40,20),new THREE.MeshStandardMaterial({color:'#6cbf4c',flatShading:true,roughness:1}));g.rotation.x=-Math.PI/2;g.position.y=-.01;scene.add(g)}
+
+// 절벽 (줄마다 하나)
+function makeCliff(x,height){
+  const w=LANE_W-1.2,gm=new THREE.PlaneGeometry(w,height,26,Math.round(height*3));const p=gm.attributes.position,col=[];
+  const cA=new THREE.Color('#9b8268'),cB=new THREE.Color('#7a6a5c'),cC=new THREE.Color('#b59c7c');
+  for(let i=0;i<p.count;i++){const px=p.getX(i),py=p.getY(i);const n=Math.sin(px*1.7+py*.9)*.18+Math.sin(py*2.3)*.12+Math.random()*.16;
+    const edge=Math.pow(Math.abs(px)/(w/2),4)*1.6;p.setZ(i,n-edge);
+    const band=(Math.sin(py*1.3)+1)/2;const c=cA.clone().lerp(cB,band*.7).lerp(cC,Math.random()*.25);col.push(c.r,c.g,c.b)}
+  gm.setAttribute('color',new THREE.Float32BufferAttribute(col,3));gm.computeVertexNormals();
+  const m=new THREE.Mesh(gm,new THREE.MeshStandardMaterial({vertexColors:true,flatShading:true,roughness:1}));m.position.set(x,height/2,0);scene.add(m);
+  // 꼭대기 바위턱
+  const top=new THREE.Mesh(new THREE.BoxGeometry(w+.6,.8,3),new THREE.MeshStandardMaterial({color:'#8a7a66',flatShading:true}));top.position.set(x,height+.4,-1);scene.add(top);
+  const grass=new THREE.Mesh(new THREE.BoxGeometry(w+.6,.12,3),new THREE.MeshStandardMaterial({color:'#6cbf4c'}));grass.position.set(x,height+.86,-1);scene.add(grass);
+  return m}
+const HOLDC=['#ff5252','#ffb300','#3fd16b','#2f8cff','#b061ff','#ff6fb5','#00c2d1'];
+const holdGeo=new THREE.IcosahedronGeometry(.26,1);
+function makeHolds(lane){const L=LV[CFG.lv],hs=[];
+  for(let k=0;k<L.n;k++){const side=k%2?1:-1,x=lane.x+side*(.45+Math.random()*.6),y=1.6+k*STEP;
+    const gold=k%5===4,shaky=L.shaky&&!gold&&k>2&&Math.random()<.25;
+    const mat=new THREE.MeshStandardMaterial({color:gold?'#ffd23f':shaky?'#9e8f80':HOLDC[(k*3+lane.i)%HOLDC.length],flatShading:true,roughness:.6,emissive:'#000000',metalness:gold?.4:0});
+    const m=new THREE.Mesh(holdGeo,mat);m.position.set(x,y,.32);m.scale.set(1.2,.85,.7);m.rotation.z=Math.random();scene.add(m);
+    if(shaky){const crack=new THREE.Mesh(new THREE.BoxGeometry(.4,.03,.05),new THREE.MeshBasicMaterial({color:'#3b2b1f'}));crack.position.z=.25;crack.rotation.z=.6;m.add(crack)}
+    hs.push({m,x,y,gold,shaky})}
+  return hs}
+const ringTex=(()=>{const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');const gr=g.createRadialGradient(64,64,20,64,64,62);gr.addColorStop(0,'rgba(255,255,255,0)');gr.addColorStop(.6,'rgba(255,255,255,.9)');gr.addColorStop(1,'rgba(255,255,255,0)');g.fillStyle=gr;g.fillRect(0,0,128,128);return new THREE.CanvasTexture(c)})();
+
+// ---------------- 캐릭터 ----------------
+const loader=new GLTFLoader();const GLB={},PROPS={};
+const HIDE=/Knife|Crossbow|Throwable|Sword|Shield|Axe|Staff|Wand|Spellbook|Mug|Arrow|Quiver/i;
+async function loadAll(){
+  await Promise.all([...new Set(HEROES)].map(n=>loader.loadAsync(`assets/kaykit-chars/${n}.glb`).then(g=>GLB[n]=g)));
+  await Promise.all(['chest_gold','coin_stack_large','banner_patternA_red'].map(n=>loader.loadAsync(`assets/dungeon/${n}.glb`).then(g=>PROPS[n]=g.scene)));
+}
+function makeHero(name){const g=GLB[name],m=SkeletonUtils.clone(g.scene);
+  m.traverse(o=>{if(o.isMesh||o.isSkinnedMesh){o.frustumCulled=false;o.castShadow=true;if(HIDE.test(o.name))o.visible=false}});
+  const bb=new THREE.Box3().setFromObject(m);m.scale.setScalar(1.7/(bb.max.y-bb.min.y));
+  const mix=new THREE.AnimationMixer(m),acts={};for(const c of g.animations)acts[c.name]=mix.clipAction(c);
+  const B={};m.traverse(o=>{if(o.isBone)B[o.name]=o});
+  return {m,mix,acts,B,cur:null}}
+function playA(h,n){const a=h.acts[n];if(!a||h.cur===a)return;if(h.cur)h.cur.fadeOut(.2);a.reset().fadeIn(.2).play();h.cur=a}
+// 뼈를 월드 방향으로 겨누기 (팔·다리 오르기 자세)
+const _q=new THREE.Quaternion(),_qp=new THREE.Quaternion(),_v=new THREE.Vector3(),_d=new THREE.Quaternion();
+function aim(b,dir){if(!b)return;b.updateWorldMatrix(true,false);b.getWorldQuaternion(_q);b.parent.getWorldQuaternion(_qp);
+  _v.set(0,1,0).applyQuaternion(_q).normalize();_d.setFromUnitVectors(_v,dir.clone().normalize());const nw=_d.multiply(_q);b.quaternion.copy(_qp.invert().multiply(nw))}
+const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+function climbPose(h,reach,t){ // reach: -1 왼손 뻗음, 1 오른손 뻗음, 0~1 사이 동작
+  const B=h.B,s=reach;
+  // 캐릭터는 벽(-z)을 봄 → 캐릭터 왼쪽 = 화면 왼쪽(-x)
+  aim(B.upperarml,V(-.35,1,-.25).lerp(V(-.75,.25,-.4),s>0?.85:0));aim(B.lowerarml,V(-.2,1,-.35).lerp(V(-.3,.9,-.5),s>0?1:0));
+  aim(B.upperarmr,V(.35,1,-.25).lerp(V(.75,.25,-.4),s<0?.85:0));aim(B.lowerarmr,V(.2,1,-.35).lerp(V(.3,.9,-.5),s<0?1:0));
+  aim(B.upperlegl,s<0?V(-.25,-.35,-.75):V(-.2,-1,-.15));aim(B.lowerlegl,s<0?V(0,-1,.2):V(0,-1,.05));
+  aim(B.upperlegr,s>0?V(.25,-.35,-.75):V(.2,-1,-.15));aim(B.lowerlegr,s>0?V(0,-1,.2):V(0,-1,.05));
+}
+
+// ---------------- 줄(사람) ----------------
+const cv=$('#cv'),ctx=cv.getContext('2d');let W=0,H=0,RECT={};
+const lanes=[];
+function viewportOrigin(){const bx=Math.max(0,(outerWidth-innerWidth)/2);return{x:screenX+bx,y:screenY+Math.max(0,outerHeight-innerHeight-bx)}}
+function computeRects(){const walls=load('walls',null),r={};
+  if(walls&&walls.left&&walls.front&&walls.right){const o=viewportOrigin();
+    for(const k of WALLS){const s=walls[k];let x0=s.x-o.x,y0=s.y-o.y,x1=x0+s.w,y1=y0+s.h;x0=Math.max(0,x0);y0=Math.max(0,y0);x1=Math.min(W,x1);y1=Math.min(H,y1);r[k]=x1-x0>50&&y1-y0>50?{x:x0,y:y0,w:x1-x0,h:y1-y0}:null}
+    if(r.left&&r.front&&r.right)return r}
+  const w=W/3;WALLS.forEach((k,i)=>r[k]={x:Math.round(i*w),y:0,w:Math.round(w),h:H});return r}
+const G={on:false,t:0,phase:'menu',rank:0,msg:null,msgT:0};
+const built={cliffs:[],objs:[]};
+function clearWorld(){for(const l of lanes){l.holds.forEach(h=>scene.remove(h.m));scene.remove(l.hero.m,l.ring,l.top)}built.cliffs.forEach(c=>scene.remove(c));built.cliffs=[];lanes.length=0}
+function laneRects(){const L=[];const walls=CFG.mode==='six'?WALLS:['front'];for(const k of walls){const r=RECT[k];L.push({x:r.x,y:r.y,w:r.w/2,h:r.h},{x:r.x+r.w/2,y:r.y,w:r.w/2,h:r.h})}return L}
+function setup(){
+  clearWorld();const n=CFG.mode==='six'?6:2,L=LV[CFG.lv],height=1.6+L.n*STEP+.2;
+  for(let i=0;i<n;i++){const x=(i-(n-1)/2)*LANE_W;const lane={i,x,k:0,y:0,ty:0,reach:1,done:false,place:0,slip:0,grabT:0,stars:0};
+    built.cliffs.push(makeCliff(x,height));
+    lane.holds=makeHolds(lane);
+    lane.hero=makeHero(HEROES[i]);lane.hero.m.position.set(x,0,.9);lane.hero.m.rotation.y=Math.PI;scene.add(lane.hero.m);
+    const ring=new THREE.Sprite(new THREE.SpriteMaterial({map:ringTex,color:COLORS[i][1],transparent:true,depthWrite:false}));ring.scale.set(1.1,1.1,1);scene.add(ring);lane.ring=ring;
+    const top=new THREE.Group();const ch=PROPS.chest_gold.clone(true);ch.scale.setScalar(.9);top.add(ch);const co=PROPS.coin_stack_large.clone(true);co.position.set(1.2,0,.2);co.scale.setScalar(.7);top.add(co);
+    const fl=PROPS.banner_patternA_red.clone(true);fl.scale.setScalar(.5);fl.position.set(-1.6,0,-.6);top.add(fl);top.position.set(x+.3,height+.92,-1.2);scene.add(top);lane.top=top;
+    lane.height=height;lane.cam=new THREE.PerspectiveCamera(50,.9,.1,500);lane.y=0;lane.ty=0;lanes.push(lane)}
+}
+function startGame(){ac();sfx.click();$('#menu').classList.remove('on');$('#homeBtn').classList.add('on');setup();G.on=true;G.phase='count';G.cntT=G.t;G.rank=0;G.msg=null;
+  speak('빛나는 돌을 톡톡 잡고 꼭대기 보물까지 올라가요!')}
+function goHome(){G.on=false;G.phase='menu';$('#menu').classList.add('on');$('#homeBtn').classList.remove('on');try{speechSynthesis.cancel()}catch(e){};if(!lanes.length)setup();demo()}
+function demo(){for(const l of lanes){l.k=0;l.y=l.ty=0;l.done=false}}
+function grab(l){if(l.done||G.phase!=='play')return;const h=l.holds[l.k];
+  l.k++;l.ty=(l.k)*STEP;l.reach=h.x<l.x?-1:1;l.grabT=G.t;sfx.grab(l.k);if(h.gold){l.stars++;sfx.gold()}
+  burst(l,h);
+  if(l.k>=l.holds.length){l.done=true;l.ty=l.height-.05;l.place=++G.rank;sfx.win();
+    const nm=COLORS[l.i][0];
+    if(CFG.mode==='duo'){G.phase='end';G.endT=G.t;banner(`${nm} 승리! 🏆`,`꼭대기 보물 도착!`);speak(`${nm} 승리! 꼭대기 도착!`)}
+    else{speak(`${nm} ${l.place}등!`);if(G.rank>=lanes.length){G.phase='end';G.endT=G.t;banner('모두 꼭대기! 🎉','다 같이 최고!')}}}}
+function slip(l){if(l.k<=0)return;l.k--;l.ty=l.k*STEP;l.slip=G.t;sfx.slip()}
+const FX=[];
+function burst(l,h){for(let i=0;i<10;i++)FX.push({lane:l.i,x:h.x,y:h.y,vx:(Math.random()-.5)*3,vy:Math.random()*3,t:0,c:h.gold?'#ffd23f':'#ffffff'})}
+function banner(t,s){G.msg={t,s};G.msgT=G.t}
+
+// ---------------- 입력 ----------------
+let LR=[];
+const _p=new THREE.Vector3();
+function onDown(x,y){if(!G.on||G.phase!=='play')return;ac();
+  for(let i=0;i<lanes.length;i++){const r=LR[i],l=lanes[i];if(!r||x<r.x||x>=r.x+r.w||y<r.y||y>=r.y+r.h||l.done)continue;
+    const h=l.holds[l.k];_p.copy(h.m.position).project(l.cam);const sx=r.x+(_p.x+1)/2*r.w,sy=r.y+(1-_p.y)/2*r.h;
+    if(Math.hypot(x-sx,y-sy)<LV[CFG.lv].tol*r.h*1.6)grab(l);else l.miss=G.t}}
+document.getElementById('cv').addEventListener('pointerdown',e=>onDown(e.clientX,e.clientY));
+addEventListener('keydown',e=>{if(e.key==='Escape')goHome();if(e.key===' '&&G.phase==='play')lanes.forEach(l=>{if(Math.random()<.5)grab(l)})});
+document.addEventListener('contextmenu',e=>e.preventDefault());
+
+// ---------------- 갱신·그리기 ----------------
+function update(dt){
+  clouds.forEach(c=>{c.position.x+=c.userData.v*dt;if(c.position.x>80)c.position.x=-60});
+  if(G.phase==='count'){const el=G.t-G.cntT;if(Math.floor(el)!==G.lastCnt){G.lastCnt=Math.floor(el);if(el<3)sfx.tick()}if(el>=3){G.phase='play';sfx.go()}}
+  for(const l of lanes){
+    if(!G.on){l.ty=((G.t*.8+l.i*3)%(l.holds.length*STEP));if(l.ty<l.y)l.y=l.ty;l.k=Math.floor(l.ty/STEP);l.reach=l.k%2?1:-1}
+    l.y+=(l.ty-l.y)*Math.min(1,dt*7);
+    // 흔들 돌
+    if(G.phase==='play'&&!l.done&&l.k>0){const h=l.holds[l.k-1];if(h.shaky){h.m.rotation.z=Math.sin(G.t*30)*.08*Math.min(1,(G.t-l.grabT));if(G.t-l.grabT>2.5){h.m.position.y-=dt*8;if(!h.fell){h.fell=1;slip(l)}}}}
+    const hero=l.hero,hy=l.done&&Math.abs(l.ty-l.y)<.1?l.height+.92:l.y+.2;
+    hero.m.position.set(l.x+(l.done?0:l.reach*.12),l.done?l.height+.92:hy,l.done?-.4:.75);
+    if(l.done){hero.m.rotation.y=0;playA(hero,'Cheer');hero.mix.update(dt)}
+    else{hero.m.rotation.y=Math.PI;playA(hero,'Unarmed_Idle');hero.mix.update(dt);climbPose(hero,l.reach,G.t)}
+    // 다음 돌 반짝
+    l.holds.forEach((h,k)=>{const nx=k===l.k&&!l.done&&(G.phase==='play'||!G.on);h.m.material.emissive.set(nx?COLORS[l.i][1]:'#000000');h.m.material.emissiveIntensity=nx?.55+Math.sin(G.t*8)*.35:0;
+      const s=nx?1.25+Math.sin(G.t*8)*.12:1;h.m.scale.set(1.2*s,.85*s,.7*s)});
+    const nh=l.holds[l.k];l.ring.visible=!!nh&&!l.done&&G.on;if(nh){l.ring.position.copy(nh.m.position);l.ring.position.z+=.1;const s=1.1+Math.sin(G.t*8)*.2;l.ring.scale.set(s,s,1)}
+    l.top.rotation.y=Math.sin(G.t)*.1;
+  }
+  for(let i=FX.length-1;i>=0;i--){const f=FX[i];f.t+=dt;if(f.t>.8){FX.splice(i,1);continue}f.x+=f.vx*dt;f.y+=f.vy*dt;f.vy-=6*dt}
+}
+const _wp=new THREE.Vector3();
+function render(){
+  LR=G.on?laneRects():[];
+  const views=[];
+  if(G.on){lanes.forEach((l,i)=>views.push({r:LR[i],l,kind:'lane'}));
+    if(CFG.mode==='duo'){views.push({r:RECT.left,l:lanes[0],kind:'side',s:-1},{r:RECT.right,l:lanes[1],kind:'side',s:1})}}
+  else{views.push({r:RECT.left,l:lanes[0],kind:'side',s:-1},{r:RECT.right,l:lanes[1],kind:'side',s:1})}
+  for(const v of views){const r=v.r,l=v.l;if(!r||!l)continue;const c=v.kind==='lane'?l.cam:(v.cam=v.cam||new THREE.PerspectiveCamera(48,1,.1,500));
+    c.aspect=r.w/r.h;
+    if(v.kind==='lane'){const cy=Math.min(l.y,l.height-3)+1.4;c.fov=52;c.position.set(l.x,cy+.1,7.4);c.lookAt(l.x,cy+.25,0)}
+    else{const cy=Math.min(l.y,l.height-2)+1;c.fov=46;c.position.set(l.x+v.s*7.5,cy+2.2,6.5);c.lookAt(l.x,cy+.8,0)}
+    c.updateProjectionMatrix();
+    const y=H-(r.y+r.h);renderer.setViewport(r.x,y,r.w,r.h);renderer.setScissor(r.x,y,r.w,r.h);renderer.render(scene,c)}
+}
+function txt(s,x,y,size,col='#fff',al='center',sh='#0007'){ctx.font=`${size}px ${FONT}`;ctx.textAlign=al;ctx.textBaseline='middle';ctx.fillStyle=sh;ctx.fillText(s,x+size*.06,y+size*.08);ctx.fillStyle=col;ctx.fillText(s,x,y)}
+function overlay(){
+  ctx.clearRect(0,0,W,H);if(!G.on)return;
+  lanes.forEach((l,i)=>{const r=LR[i];if(!r)return;const [nm,col]=COLORS[i];
+    // 위: 이름 + 높이 막대
+    ctx.fillStyle='#0006';ctx.beginPath();ctx.roundRect(r.x+r.w*.06,r.y+r.h*.03,r.w*.88,r.h*.08,r.h*.04);ctx.fill();
+    ctx.fillStyle=col;ctx.beginPath();ctx.roundRect(r.x+r.w*.06,r.y+r.h*.03,r.w*.88*Math.min(1,l.k/l.holds.length),r.h*.08,r.h*.04);ctx.fill();
+    txt(`${nm}  ${l.k} / ${l.holds.length}  ${'⭐'.repeat(l.stars)}`,r.x+r.w/2,r.y+r.h*.07,r.h*.045,'#fff');
+    if(l.done)txt(CFG.mode==='six'?['','🥇 1등','🥈 2등','🥉 3등','4등','5등','6등'][l.place]:'🏆',r.x+r.w/2,r.y+r.h*.3,r.h*.1,'#fff');
+    if(G.t-l.slip<1)txt('미끄러졌어요!',r.x+r.w/2,r.y+r.h*.55,r.h*.05,'#ffe08a');
+    // 효과
+    for(const f of FX){if(f.lane!==i)continue;_wp.set(f.x,f.y,.4).project(l.cam);ctx.fillStyle=f.c;ctx.globalAlpha=1-f.t/.8;ctx.beginPath();ctx.arc(r.x+(_wp.x+1)/2*r.w,r.y+(1-_wp.y)/2*r.h,r.h*.008,0,6.283);ctx.fill();ctx.globalAlpha=1}
+    // 화면 경계
+    ctx.fillStyle=col;ctx.fillRect(i%2?r.x:r.x+r.w-4,r.y,4,r.h)});
+  if(G.phase==='count'){const n=3-Math.floor(G.t-G.cntT);for(const r of LR)txt(n>0?String(n):'출발!',r.x+r.w/2,r.y+r.h*.45,r.h*.25,'#fff')}
+  if(G.msg){const f=RECT.front,w=f.w*.6,h=f.h*.26,x=f.x+(f.w-w)/2,y=f.y+f.h*.32;ctx.fillStyle='#ffffffee';ctx.beginPath();ctx.roundRect(x,y,w,h,h*.2);ctx.fill();
+    txt(G.msg.t,x+w/2,y+h*.38,h*.28,'#ff7a2f','center','#0002');txt(G.msg.s,x+w/2,y+h*.75,h*.13,'#14406b','center','#0000')}
+}
+function resize(){W=innerWidth;H=innerHeight;cv.width=W;cv.height=H;renderer.setSize(W,H,false);RECT=computeRects();
+  const f=RECT.front,m=$('#menu');Object.assign(m.style,{left:f.x+'px',top:f.y+'px',width:f.w+'px',height:f.h+'px'});
+  const hb=$('#homeBtn');hb.style.left=(f.x+f.w/2-(hb.offsetWidth||70)/2)+'px';hb.style.top=(f.y+f.h*.9)+'px'}
+addEventListener('resize',resize);
+let last=performance.now();
+function loop(now){const dt=Math.min(.05,(now-last)/1000);last=now;G.t+=dt;update(dt);render();overlay();requestAnimationFrame(loop)}
+function syncOpts(){document.querySelectorAll('.opt').forEach(b=>b.classList.toggle('sel',String(CFG[b.dataset.k])===b.dataset.v))}
+document.querySelectorAll('.opt').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.k,v=b.dataset.v;CFG[k]=/^\d+$/.test(v)?+v:v;save(k,CFG[k]);sfx.click();syncOpts()}));
+$('#startBtn').addEventListener('click',startGame);$('#homeBtn').addEventListener('click',goHome);
+(function(){const m=/walls=([-\d,;]+)/.exec(decodeURIComponent(location.hash||''));if(!m)return;
+  const p=m[1].split(';').map(t=>t.split(',').map(Number));if(p.length!==3||p.some(a=>a.length!==4||a.some(isNaN)))return;
+  const w={};WALLS.forEach((k,i)=>w[k]={x:p[i][0],y:p[i][1],w:p[i][2],h:p[i][3]});save('walls',w)})();
+syncOpts();resize();
+loadAll().then(()=>{$('#loading').remove();goHome();requestAnimationFrame(loop)}).catch(e=>{$('#loading').textContent='불러오기 실패: '+e.message;console.error(e)});
+window.__climb={G,CFG,lanes,grab,startGame,goHome,LR:()=>LR};
+</script>
+<script src="/tuio-pointer.js"></script>
+</body>
+</html>

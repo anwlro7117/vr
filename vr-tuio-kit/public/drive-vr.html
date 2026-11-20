@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>트럭 배달</title>
+<style>
+@font-face{font-family:Jua;src:url(fonts/Jua.woff2) format('woff2');font-display:block}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;user-select:none;-webkit-user-select:none;touch-action:none}
+html,body{height:100%;overflow:hidden;background:#87c9ff;font-family:Jua,"Malgun Gothic",sans-serif}
+button{font-family:inherit;border:none;cursor:pointer;color:inherit}
+canvas{position:fixed;left:0;top:0;width:100%;height:100%;display:block}
+#menu{position:fixed;display:none;flex-direction:column;align-items:center;gap:2.6vh;padding-top:5vh;z-index:3;background:linear-gradient(#69b8ff,#cdeaff 62%,#6f7a86 62%,#59636e)}
+#menu.on{display:flex}
+#menu h1{font-size:10vh;color:#fff;text-shadow:0 .8vh 0 #2c6aa8,0 1.6vh 3vh #0005;font-weight:400;text-align:center;line-height:1.1}
+#menu h1 small{display:block;font-size:3vh;color:#14406b;text-shadow:none;margin-top:1.2vh}
+.row{display:flex;gap:1.6vh;align-items:center}
+.lbl{font-size:3vh;color:#14406b;min-width:9vh;text-align:right;white-space:nowrap}
+.opt{font-size:3.2vh;padding:1.3vh 3vh;border-radius:5vh;background:#ffffffcc;color:#14406b;white-space:nowrap;box-shadow:0 .6vh 0 #0003}
+.opt.sel{background:#ffd23f;color:#5a3200;transform:translateY(-.3vh)}
+.opt small{display:block;font-size:1.9vh;opacity:.8}
+#startBtn{font-size:5.6vh;padding:2vh 10vh;border-radius:7vh;background:#ff7a2f;color:#fff;box-shadow:0 1vh 0 #a54200;margin-top:1vh}
+.steer{position:fixed;display:none;width:15vh;height:15vh;border-radius:50%;z-index:4;font-size:8vh;line-height:15vh;text-align:center;color:#fff;
+  background:radial-gradient(#ffb340,#ff7a1a);box-shadow:0 0 0 .8vh #fff8,0 1vh 2vh #0008;transform:translate(-50%,-50%)}
+.steer.on{display:block}
+.steer.lit{background:radial-gradient(#fff3a0,#ffd23f);color:#7a4300}
+#hornBtn{position:fixed;display:none;width:10vh;height:10vh;border-radius:50%;z-index:4;font-size:5vh;line-height:10vh;text-align:center;background:#ffffffcc;transform:translate(-50%,-50%)}
+#hornBtn.on{display:block}
+#homeBtn{position:fixed;width:7vh;height:7vh;border-radius:50%;background:#ffffffdd;font-size:3.4vh;display:none;z-index:4}
+#homeBtn.on{display:block}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;color:#fff;font-size:6vh;z-index:9;background:#69b8ff}
+</style>
+<script type="importmap">{"imports":{"three":"/lib/three.module.min.js"}}</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="cv"></canvas>
+<div id="loading">🚚 마을 만드는 중…</div>
+<section id="menu">
+  <h1>🚚 트럭 배달 📦<small>핸들 버튼으로 길을 골라 집집마다 배달해요</small></h1>
+  <div class="row"><span class="lbl">운전</span>
+    <button class="opt" data-k="lv" data-v="0">🐢 천천히<small>갈림길에서 기다려 줘요</small></button>
+    <button class="opt" data-k="lv" data-v="1">🚗 보통<small>신호등 · 다른 차</small></button>
+    <button class="opt" data-k="lv" data-v="2">🏎️ 빠르게<small>안 기다려요</small></button>
+  </div>
+  <div class="row"><span class="lbl">배달</span>
+    <button class="opt" data-k="n" data-v="3">📦 3곳</button>
+    <button class="opt" data-k="n" data-v="5">📦 5곳</button>
+    <button class="opt" data-k="n" data-v="8">📦 8곳</button>
+  </div>
+  <button id="startBtn">시동 걸기! ▶</button>
+</section>
+<button class="steer" id="stL">◀</button>
+<button class="steer" id="stR">▶</button>
+<button id="hornBtn">📯</button>
+<button id="homeBtn">🏠</button>
+<script>window.TUIO_DWELL_MS=6000;</script>
+<script type="module">
+// ======================================================================
+// 트럭 배달 — VR실 벽 3면 (launch.js span drive-vr.html)
+//  1인칭 운전석: 정면 벽 = 앞 유리, 양옆 벽 = 옆 창문. 핸들 ◀ ▶ 버튼(또는 왼쪽/오른쪽 벽 톡)으로
+//  다음 갈림길에서 갈 방향을 고른다. 내비 화살표를 따라 배달 집(깃발 색·번호)에 가면 자동으로 멈춰 배달.
+//  천천히: 내비가 꺾으라는 갈림길에서 버튼을 누를 때까지 기다림. 보통: 신호등·다른 차. 빠르게: 안 기다림.
+//  마을 모델: KayKit City Builder Bits (CC0).  Esc 처음으로
+// ======================================================================
+import * as THREE from 'three';
+import {GLTFLoader} from '/lib/jsm/loaders/GLTFLoader.js';
+const $=s=>document.querySelector(s);
+const LS='drivevr.';
+function load(k,d){try{const v=localStorage.getItem(LS+k);return v==null?d:JSON.parse(v)}catch(e){return d}}
+function save(k,v){try{localStorage.setItem(LS+k,JSON.stringify(v))}catch(e){}}
+const CFG={lv:load('lv',0),n:load('n',3)};
+const WALLS=['left','front','right'];
+const FONT='Jua,"Malgun Gothic",sans-serif';
+const SPEED=[5,7,9.5];
+
+// ---------------- 소리 ----------------
+let AC=null,eng=null;
+function ac(){if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)()}catch(e){}
+  if(AC){const o=AC.createOscillator(),f=AC.createBiquadFilter(),g=AC.createGain();o.type='sawtooth';o.frequency.value=48;f.type='lowpass';f.frequency.value=260;g.gain.value=0;o.connect(f);f.connect(g);g.connect(AC.destination);o.start();eng={o,g}}}
+  if(AC&&AC.state==='suspended')AC.resume();return AC}
+function tone(f,t0,d,type='triangle',v=.14,f2){const a=ac();if(!a)return;const o=a.createOscillator(),g=a.createGain(),T=a.currentTime+t0;o.type=type;o.frequency.setValueAtTime(f,T);if(f2)o.frequency.exponentialRampToValueAtTime(f2,T+d);g.gain.setValueAtTime(v,T);g.gain.exponentialRampToValueAtTime(.001,T+d);o.connect(g);g.connect(a.destination);o.start(T);o.stop(T+d+.02)}
+const sfx={blink(){tone(1800,0,.03,'square',.05);tone(1400,.18,.03,'square',.05)},horn(){tone(392,0,.45,'square',.12);tone(494,0,.45,'square',.1)},
+  done(){[784,988,1175,1568].forEach((f,i)=>tone(f,i*.09,.25,'triangle',.14))},win(){[523,659,784,1047,784,1047,1319].forEach((f,i)=>tone(f,i*.11,.28,'triangle',.14))},
+  click(){tone(880,0,.06,'triangle',.1)},ding(){tone(1320,0,.2,'sine',.12)}};
+let lastSay=0;function speak(t,force){const n=performance.now();if(!force&&n-lastSay<2500)return;lastSay=n;try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='ko-KR';u.rate=1.05;speechSynthesis.speak(u)}catch(e){}}
+
+// ---------------- 3D 기본 ----------------
+const renderer=new THREE.WebGLRenderer({canvas:$('#gl'),antialias:true});renderer.setPixelRatio(1);renderer.setScissorTest(true);
+const scene=new THREE.Scene();scene.background=new THREE.Color('#9fd6ff');scene.fog=new THREE.Fog('#cfe9ff',40,150);
+scene.add(new THREE.HemisphereLight('#ffffff','#6b7f5a',1.5));
+const sun=new THREE.DirectionalLight('#fff3d6',2.2);sun.position.set(-30,50,20);scene.add(sun);
+const loader=new GLTFLoader();const M={};
+const NAMES=['road_straight','road_straight_crossing','road_corner_curved','road_tsplit','road_junction','base','bench','box_A','box_B','bush','dumpster','firehydrant','streetlight','watertower',
+  'building_A','building_B','building_C','building_D','building_E','building_F','building_G','building_H','car_hatchback','car_police','car_sedan','car_stationwagon','car_taxi'];
+async function loadAll(){await Promise.all(NAMES.map(n=>loader.loadAsync(`assets/city/${n}.gltf`).then(g=>M[n]=g.scene)))}
+const S=4,T=2*S,N=4,SP=3,OFF=S*.5;    // 모델 배율, 타일 크기, 갈림길 수(한 줄), 갈림길 간격(타일), 차선 중심
+const DIRV=[[0,-1],[1,0],[0,1],[-1,0]];   // 0 북(-z) 1 동(+x) 2 남(+z) 3 서(-x)
+const TILES=SP*(N-1)+1,MARGIN=2,ORG=-(TILES-1)/2*T;
+function tileXZ(tx,tz){return[ORG+tx*T,ORG+tz*T]}
+function nodeXZ(i,j){return tileXZ(i*SP,j*SP)}
+function nb(i,j,d){const a=i+DIRV[d][0],b=j+DIRV[d][1];return a>=0&&b>=0&&a<N&&b<N?[a,b]:null}
+function put(n,x,z,ry=0,s=S,y=0){const o=M[n].clone(true);o.position.set(x,y,z);o.rotation.y=ry;o.scale.setScalar(s);scene.add(o);return o}
+const roadTiles=new Set();
+function buildTown(){
+  // 풀밭
+  const g=new THREE.Mesh(new THREE.PlaneGeometry(600,600),new THREE.MeshStandardMaterial({color:'#7cc45a',roughness:1}));g.rotation.x=-Math.PI/2;g.position.y=-.02;scene.add(g);
+  // 길
+  const types=[['road_junction',[0,1,2,3]],['road_tsplit',[0,1,2]],['road_corner_curved',[1,2]]];
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){const O=[0,1,2,3].filter(d=>nb(i,j,d));const key=O.join();
+    let done=false;for(const [n,base] of types){for(let k=0;k<4&&!done;k++){const rs=base.map(d=>(d-k+4)%4).sort().join();if(rs===key){const [x,z]=nodeXZ(i,j);put(n,x,z,k*Math.PI/2);done=true}}if(done)break}
+    roadTiles.add(i*SP+','+j*SP)}
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++)for(const d of [1,2]){if(!nb(i,j,d))continue;for(let s=1;s<SP;s++){const tx=i*SP+DIRV[d][0]*s,tz=j*SP+DIRV[d][1]*s;const [x,z]=tileXZ(tx,tz);
+      put(Math.random()<.25?'road_straight_crossing':'road_straight',x,z,d===1?Math.PI/2:0);roadTiles.add(tx+','+tz)}}
+  // 건물 (길 옆 타일만, 가장 가까운 길을 보게)
+  const BL=['building_A','building_B','building_C','building_D','building_E','building_F','building_G','building_H'];
+  for(let tx=-MARGIN;tx<TILES+MARGIN;tx++)for(let tz=-MARGIN;tz<TILES+MARGIN;tz++){if(roadTiles.has(tx+','+tz))continue;const [x,z]=tileXZ(tx,tz);
+    let face=-1;for(let d=0;d<4;d++)if(roadTiles.has((tx+DIRV[d][0])+','+(tz+DIRV[d][1]))){face=d;break}
+    if(face<0){put('base',x,z);if(Math.random()<.5)put('bush',x+rnd(-3,3),z+rnd(-3,3),0,S*2);if(Math.random()<.08)put('watertower',x,z,0,S*1.4);continue}
+    const b=put(BL[Math.random()*8|0],x,z,0);b.rotation.y=[Math.PI,Math.PI/2,0,-Math.PI/2][face];b.userData.tile=[tx,tz];houses.push(b)}
+  // 가로등·소화전
+  for(const k of roadTiles){const [tx,tz]=k.split(',').map(Number);if(Math.random()<.18){const [x,z]=tileXZ(tx,tz);put(Math.random()<.6?'streetlight':'firehydrant',x+T*.45*(Math.random()<.5?1:-1),z+T*.45,0,S)}}
+}
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const houses=[];
+
+// ---------------- 신호등 ----------------
+const lights=[];   // {i,j,t,heads:[...]}
+function makeLights(){
+  const lampG=new THREE.SphereGeometry(.18,10,8),boxM=new THREE.MeshStandardMaterial({color:'#2b2f36'}),poleM=new THREE.MeshStandardMaterial({color:'#9aa3ad'});
+  for(let i=0;i<N;i++)for(let j=0;j<N;j++){const O=[0,1,2,3].filter(d=>nb(i,j,d));if(O.length<4||Math.random()<.35)continue;
+    const L={i,j,t:Math.random()*18,heads:[]};const [cx,cz]=nodeXZ(i,j);
+    for(const d of O){ // 들어오는 방향 d 를 보는 신호등: 교차로 들어오기 전 오른쪽 모서리
+      const back=[-DIRV[d][0],-DIRV[d][1]],rt=DIRV[(d+1)%4];const x=cx+back[0]*(T/2+.4)+rt[0]*(T/2-.5),z=cz+back[1]*(T/2+.4)+rt[1]*(T/2-.5);
+      const pole=new THREE.Mesh(new THREE.CylinderGeometry(.08,.08,3.6,8),poleM);pole.position.set(x,1.8,z);scene.add(pole);
+      const hd=new THREE.Group();hd.position.set(x,3.9,z);hd.rotation.y=Math.atan2(back[0],back[1]);scene.add(hd);
+      const bx=new THREE.Mesh(new THREE.BoxGeometry(.5,1.4,.35),boxM);hd.add(bx);
+      const lamps=['#ff3b30','#ffcc00','#34c759'].map((c,k)=>{const m=new THREE.Mesh(lampG,new THREE.MeshStandardMaterial({color:'#333',emissive:c,emissiveIntensity:0}));m.position.set(0,.42-k*.42,.2);hd.add(m);return m});
+      L.heads.push({d,lamps})}
+    lights.push(L)}}
+const CYC=18;   // 남북 초록 7 노랑 2 / 동서 초록 7 노랑 2
+function lightState(L,axis){const t=L.t%CYC,a=t<9?0:1,tt=t%9;if(a!==axis)return'red';return tt<7?'green':'yellow'}
+function lightAt(i,j){return lights.find(L=>L.i===i&&L.j===j)}
+
+// ---------------- 차 움직임 (갈림길 사이 길 → 갈림길 곡선) ----------------
+function v2(x,z){return new THREE.Vector2(x,z)}
+function entryPt(i,j,d){const [cx,cz]=nodeXZ(i,j),r=DIRV[(d+1)%4];return v2(cx-DIRV[d][0]*T/2+r[0]*OFF,cz-DIRV[d][1]*T/2+r[1]*OFF)}
+function exitPt(i,j,d){const [cx,cz]=nodeXZ(i,j),r=DIRV[(d+1)%4];return v2(cx+DIRV[d][0]*T/2+r[0]*OFF,cz+DIRV[d][1]*T/2+r[1]*OFF)}
+function curveSeg(i,j,d,d2){const p0=entryPt(i,j,d),p2=exitPt(i,j,d2),[cx,cz]=nodeXZ(i,j);const r1=DIRV[(d+1)%4],r2=DIRV[(d2+1)%4];
+  const p1=d===d2?p0.clone().lerp(p2,.5):v2(cx+(r1[0]+r2[0])*OFF,cz+(r1[1]+r2[1])*OFF);return makeSeg(p0,p1,p2)}
+function makeSeg(p0,p1,p2){let len=0,prev=p0;for(let k=1;k<=12;k++){const q=bez(p0,p1,p2,k/12);len+=q.distanceTo(prev);prev=q}return{p0,p1,p2,len}}
+function bez(p0,p1,p2,t){const a=(1-t)*(1-t),b=2*(1-t)*t,c=t*t;return v2(p0.x*a+p1.x*b+p2.x*c,p0.y*a+p1.y*b+p2.y*c)}
+function bezT(s,t){const a=-2*(1-t),b=2-4*t,c=2*t;return v2(s.p0.x*a+s.p1.x*b+s.p2.x*c,s.p0.y*a+s.p1.y*b+s.p2.y*c)}
+// 차: {i,j 다음 갈림길, d 방향, seg, s, kind 'edge'|'turn'|'wait', v}
+function startOnEdge(c,i,j,d){ // i,j 에서 d 방향 길로 나감
+  const n=nb(i,j,d);c.d=d;c.ni=n[0];c.nj=n[1];c.seg=makeSeg(exitPt(i,j,d),exitPt(i,j,d).lerp(entryPt(n[0],n[1],d),.5),entryPt(n[0],n[1],d));c.s=0;c.kind='edge'}
+function vehPos(c){const t=Math.min(1,c.s/c.seg.len);return[bez(c.seg.p0,c.seg.p1,c.seg.p2,t),bezT(c.seg,t)]}
+function canGo(i,j,d){return !!nb(i,j,d)}
+function blocked(c,all){const [p,tg]=vehPos(c);tg.normalize();for(const o of all){if(o===c)continue;const [q]=vehPos(o);const dx=q.x-p.x,dz=q.y-p.y,dist=Math.hypot(dx,dz);if(dist>8||dist<.01)continue;
+  const fw=(dx*tg.x+dz*tg.y),lat=Math.abs(dx*tg.y-dz*tg.x);if(fw>0&&fw<7.5&&lat<1.8)return true}return false}
+
+// ---------------- 트럭 (운전석) ----------------
+const truck=new THREE.Group();scene.add(truck);
+const EYE=2.55;
+const cams={};const YAW={left:Math.PI/2,front:0,right:-Math.PI/2};
+for(const k of WALLS){const c=new THREE.PerspectiveCamera(60,16/9,.05,400);c.position.set(0,EYE,.15);c.rotation.order='YXZ';c.rotation.y=YAW[k];c.rotation.x=-.1;truck.add(c);cams[k]=c}
+const cab={};
+{const dark=new THREE.MeshStandardMaterial({color:'#2d3138',roughness:.8}),body=new THREE.MeshStandardMaterial({color:'#ff8a2a',roughness:.6}),grey=new THREE.MeshStandardMaterial({color:'#4a505a',roughness:.7});
+  const add=(geo,m,x,y,z,rx=0,ry=0,rz=0)=>{const o=new THREE.Mesh(geo,m);o.position.set(x,y,z);o.rotation.set(rx,ry,rz);truck.add(o);return o};
+  add(new THREE.BoxGeometry(3,.5,1.2),dark,0,1.8,-1.25);                         // 계기판
+  add(new THREE.BoxGeometry(3,.08,1.0),grey,0,2.07,-1.2);
+  for(const s of [-1,1])add(new THREE.BoxGeometry(.14,1.7,.14),body,s*1.42,2.9,-1.55,0,0,s*.12);   // 앞 기둥
+  add(new THREE.BoxGeometry(3.1,.22,1.4),body,0,3.78,-1.0);                       // 지붕 가장자리
+  for(const s of [-1,1]){add(new THREE.BoxGeometry(.12,1.4,2.6),body,s*1.55,1.55,.1);add(new THREE.BoxGeometry(.12,.12,2.6),body,s*1.55,3.72,.1)} // 문
+  // 핸들
+  const wheel=new THREE.Group();wheel.position.set(0,2.17,-.95);wheel.rotation.x=-.45;truck.add(wheel);
+  const rim=new THREE.Mesh(new THREE.TorusGeometry(.5,.05,10,40),new THREE.MeshStandardMaterial({color:'#1f2328',roughness:.5}));wheel.add(rim);
+  for(const a of [0,Math.PI*2/3,Math.PI*4/3]){const sp=new THREE.Mesh(new THREE.BoxGeometry(.06,.5,.03),grey);sp.position.set(Math.sin(a)*.25,-Math.cos(a)*.25,0);sp.rotation.z=a;wheel.add(sp)}
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(.13,.13,.06,20),body);hub.rotation.x=Math.PI/2;wheel.add(hub);
+  const col=add(new THREE.CylinderGeometry(.05,.07,.6,10),dark,0,1.95,-1.1,-.45-Math.PI/2,0,0);
+  cab.wheel=wheel;cab.gripL=new THREE.Object3D();cab.gripL.position.set(-.5,0,0);wheel.add(cab.gripL);cab.gripR=new THREE.Object3D();cab.gripR.position.set(.5,0,0);wheel.add(cab.gripR);
+  // 깜빡이
+  cab.blL=add(new THREE.ConeGeometry(.08,.16,3),new THREE.MeshStandardMaterial({color:'#333',emissive:'#33ff66',emissiveIntensity:0}),-.35,2.12,-.75,0,0,Math.PI/2);
+  cab.blR=add(new THREE.ConeGeometry(.08,.16,3),new THREE.MeshStandardMaterial({color:'#333',emissive:'#33ff66',emissiveIntensity:0}),.35,2.12,-.75,0,0,-Math.PI/2);
+  // 짐칸 상자 (뒤)
+  add(new THREE.BoxGeometry(2.6,2.6,4),new THREE.MeshStandardMaterial({color:'#f4f4f4'}),0,2.1,3.2);
+}
+
+// ---------------- 배달 ----------------
+const COLORS=[['빨간','#ff3b30'],['파란','#2f80ff'],['노란','#ffcc00'],['초록','#2ecc71'],['보라','#a35cff'],['주황','#ff8a00']];
+const ITEMS=['🍎 사과','🧸 곰인형','🍕 피자','🎂 케이크','📚 책','⚽ 공','🥛 우유','🎁 선물','🌻 꽃'];
+const pin=new THREE.Group();scene.add(pin);
+{const ball=new THREE.Mesh(new THREE.SphereGeometry(1.4,24,16),new THREE.MeshStandardMaterial({color:'#ff3b30',emissive:'#ff3b30',emissiveIntensity:.4}));ball.position.y=2.2;pin.add(ball);
+  const cone=new THREE.Mesh(new THREE.ConeGeometry(.9,1.8,20),ball.material);cone.rotation.x=Math.PI;cone.position.y=.9;pin.add(cone);pin.userData.mat=ball.material;
+  const sp=new THREE.Sprite(new THREE.SpriteMaterial({depthTest:false}));sp.position.y=2.2;sp.scale.set(2,2,1);sp.renderOrder=9;pin.add(sp);pin.userData.sp=sp}
+const spotRing=new THREE.Mesh(new THREE.RingGeometry(1.4,2,32),new THREE.MeshBasicMaterial({color:'#ffd23f',transparent:true,opacity:.8,side:THREE.DoubleSide}));spotRing.rotation.x=-Math.PI/2;spotRing.position.y=.25;scene.add(spotRing);
+function numTex(n,col){const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');g.fillStyle='#fff';g.beginPath();g.arc(64,64,56,0,6.283);g.fill();g.fillStyle=col;g.font='bold 80px Jua, sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(n,64,70);const t=new THREE.CanvasTexture(c);t.colorSpace=THREE.SRGBColorSpace;return t}
+function newOrder(){
+  // 길 (갈림길 a→b) 하나 + 그 옆 집
+  for(let tries=0;tries<200;tries++){const i=Math.random()*N|0,j=Math.random()*N|0,d=[1,2][Math.random()*2|0],n=nb(i,j,d);if(!n)continue;
+    if(G.order&&G.order.i===i&&G.order.j===j&&G.order.d===d)continue;
+    const s=1+(Math.random()*(SP-1)|0),tx=i*SP+DIRV[d][0]*s,tz=j*SP+DIRV[d][1]*s;const side=Math.random()<.5?1:-1,pd=(d+1)%4,ox=tx+DIRV[pd][0]*side,oz=tz+DIRV[pd][1]*side;
+    const h=houses.find(b=>b.userData.tile[0]===ox&&b.userData.tile[1]===oz);if(!h)continue;
+    const [rx,rz]=tileXZ(tx,tz);const [hx,hz]=tileXZ(ox,oz);
+    const ci=Math.random()*COLORS.length|0,num=1+(Math.random()*9|0);
+    G.order={i,j,d,n,tx,tz,road:v2(rx,rz),house:h,col:COLORS[ci],num,item:ITEMS[Math.random()*ITEMS.length|0]};
+    pin.position.set(hx,h.position.y+12,hz);pin.userData.mat.color.set(COLORS[ci][1]);pin.userData.mat.emissive.set(COLORS[ci][1]);
+    pin.userData.sp.material.map=numTex(num,COLORS[ci][1]);pin.userData.sp.material.needsUpdate=true;
+    spotRing.position.set(rx,.25,rz);
+    speak(`${G.order.item.split(' ')[1]} 배달! ${COLORS[ci][0]} 깃발, ${num}번 집으로 가요!`,true);G.route=null;return}
+}
+// 내비: (갈림길, 방향) 상태로 너비 우선 탐색 → 다음 갈림길에서 어디로
+function navNext(){const o=G.order;if(!o)return null;const c=TR;
+  const startI=c.ni,startJ=c.nj,startD=c.d;
+  const goal=(i,j,d)=>{const n=nb(i,j,d);return n&&((i===o.i&&j===o.j&&d===o.d)||(n[0]===o.i&&n[1]===o.j&&d===(o.d+2)%4))};
+  // 이미 목표 길 위?
+  if(c.kind==='edge'){const pi=c.ni-DIRV[c.d][0],pj=c.nj-DIRV[c.d][1];if(goal(pi,pj,c.d))return{here:true}}
+  const seen=new Set(),q=[[startI,startJ,startD,null]];seen.add(startI+','+startJ+','+startD);
+  while(q.length){const [i,j,d,first]=q.shift();for(const t of [0,-1,1]){const d2=(d+t+4)%4;if(!canGo(i,j,d2))continue;const f=first==null?t:first;if(goal(i,j,d2))return{turn:f};
+      const n=nb(i,j,d2),key=n[0]+','+n[1]+','+d2;if(seen.has(key))continue;seen.add(key);q.push([n[0],n[1],d2,f])}}
+  return null}
+
+// ---------------- 게임 상태 ----------------
+const G={on:false,t:0,phase:'menu',done:0,order:null,queued:0,waitTurn:false,msg:null,msgT:0};
+const TR={i:0,j:0,ni:0,nj:0,d:1,seg:null,s:0,kind:'edge',v:0,yaw:0};
+const cars=[];
+function spawnCars(n){cars.forEach(c=>scene.remove(c.o));cars.length=0;const CN=['car_hatchback','car_sedan','car_stationwagon','car_taxi','car_police'];
+  for(let k=0;k<n;k++){const c={o:put(CN[k%CN.length],0,0,0,S*1.05),v:0};let i,j,d;do{i=Math.random()*N|0;j=Math.random()*N|0;d=Math.random()*4|0}while(!nb(i,j,d)||(i===TR.i&&j===TR.j));
+    startOnEdge(c,i,j,d);c.s=Math.random()*c.seg.len*.8;cars.push(c)}}
+function startGame(){ac();sfx.click();$('#menu').classList.remove('on');['#stL','#stR','#hornBtn','#homeBtn'].forEach(s=>$(s).classList.add('on'));
+  G.on=true;G.phase='play';G.done=0;G.t0=G.t;G.order=null;G.queued=0;
+  startOnEdge(TR,0,0,1);TR.s=2;TR.v=0;spawnCars(CFG.lv===0?3:7);newOrder();banner('출발! 🚚','핸들 ◀ ▶ 로 길을 골라요')}
+function goHome(){G.on=false;G.phase='menu';$('#menu').classList.add('on');['#stL','#stR','#hornBtn','#homeBtn'].forEach(s=>$(s).classList.remove('on'));if(eng)eng.g.gain.value=0;try{speechSynthesis.cancel()}catch(e){}
+  startOnEdge(TR,0,0,1);spawnCars(6);G.order=null;pin.visible=false;spotRing.visible=false}
+function banner(t,s){G.msg={t,s};G.msgT=G.t}
+function steer(t){if(!G.on||G.phase!=='play')return;ac();G.queued=t;G.queuedT=G.t;sfx.blink();const el=$(t<0?'#stL':'#stR');el.classList.add('lit');setTimeout(()=>el.classList.remove('lit'),300)}
+
+// 갈림길 도착 처리
+function atNode(c,isTruck){
+  const i=c.ni,j=c.nj,d=c.d;
+  const L=CFG.lv>0||!isTruck?lightAt(i,j):null;if(L&&lightState(L,d%2)!=='green'){c.kind='wait';c.waitLight=true;if(isTruck)speak('빨간불! 잠깐 멈춰요');return}
+  let t;
+  if(isTruck){const nav=navNext();const want=nav&&!nav.here?nav.turn:null;
+    if(G.queued&&canGo(i,j,(d+G.queued+4)%4))t=G.queued;
+    else if(CFG.lv<2&&want!=null&&want!==0&&canGo(i,j,(d+want+4)%4)){c.kind='wait';c.waitTurn=want;speak(want<0?'왼쪽 버튼을 눌러요!':'오른쪽 버튼을 눌러요!');return}
+    else if(canGo(i,j,d))t=0;
+    else{c.kind='wait';c.waitTurn=canGo(i,j,(d+3)%4)?-1:1;speak('길이 끝났어요! 왼쪽? 오른쪽?');return}
+    G.queued=0}
+  else{const opts=[0,-1,1].filter(k=>canGo(i,j,(d+k+4)%4));t=opts[Math.random()*opts.length|0];if(t===undefined)t=2}
+  const d2=(d+t+4)%4;c.seg=curveSeg(i,j,d,d2);c.s=0;c.kind='turn';c.d2=d2;c.waitTurn=null;c.waitLight=false}
+function move(c,dt,isTruck){
+  if(c.kind==='wait'){
+    if(c.waitLight){const L=lightAt(c.ni,c.nj);if(!L||lightState(L,c.d%2)==='green'){c.waitLight=false;atNode(c,isTruck)}}
+    else if(isTruck&&c.waitTurn!=null&&G.queued){const k=G.queued;if(canGo(c.ni,c.nj,(c.d+k+4)%4)){c.waitTurn=null;atNode(c,true)}else G.queued=0}
+    c.v=0;return}
+  const vmax=isTruck?SPEED[CFG.lv]:SPEED[0]*.9;const blk=blocked(c,[TR,...cars]);
+  c.v+=((blk?0:vmax)-c.v)*Math.min(1,dt*(blk?6:1.5));c.s+=c.v*dt;
+  if(c.s>=c.seg.len){const over=c.s-c.seg.len;
+    if(c.kind==='edge'){atNode(c,isTruck);if(c.kind==='turn')c.s=over}
+    else{const pi=c.ni,pj=c.nj,d2=c.d2;startOnEdge(c,pi,pj,d2);c.s=over}}
+}
+function placeVeh(c,o,isTruck){const [p,tg]=vehPos(c);const yaw=Math.atan2(-tg.x,-tg.y);
+  if(isTruck){c.yaw=yaw;truck.position.set(p.x,0,p.y);truck.rotation.y=yaw}else{o.position.set(p.x,.05,p.y);o.rotation.y=yaw+Math.PI}}
+function checkDelivery(){const o=G.order;if(!o||G.phase!=='play'||TR.kind!=='edge')return;const [p]=vehPos(TR);if(p.distanceTo(o.road)<3.2){
+  G.phase='deliver';G.delT=G.t;sfx.done();G.done++;speak(`배달 완료! ${G.done}번째!`,true);banner('배달 완료! 📦',`${o.col[0]} 깃발 ${o.num}번 집 · ${o.item}`);
+  G.box={from:new THREE.Vector3(p.x,2.5,p.y),to:o.house.position.clone().setY(1),t:0};boxMesh.visible=true}}
+const boxMesh=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),new THREE.MeshStandardMaterial({color:'#c8955a'}));boxMesh.visible=false;scene.add(boxMesh);
+
+// ---------------- 입력 ----------------
+$('#stL').addEventListener('pointerdown',e=>{e.stopPropagation();steer(-1)});
+$('#stR').addEventListener('pointerdown',e=>{e.stopPropagation();steer(1)});
+$('#hornBtn').addEventListener('pointerdown',e=>{e.stopPropagation();ac();sfx.horn()});
+let RECT={};
+$('#cv').addEventListener('pointerdown',e=>{if(!G.on)return;const x=e.clientX,y=e.clientY;
+  for(const k of ['left','right']){const r=RECT[k];if(r&&x>=r.x&&x<r.x+r.w&&y>=r.y&&y<r.y+r.h)steer(k==='left'?-1:1)}});
+addEventListener('keydown',e=>{if(e.key==='Escape')goHome();if(e.key==='ArrowLeft')steer(-1);if(e.key==='ArrowRight')steer(1);if(e.key===' ')sfx.horn()});
+document.addEventListener('contextmenu',e=>e.preventDefault());
+
+// ---------------- 갱신·그리기 ----------------
+const cv=$('#cv'),ctx=cv.getContext('2d');let W=0,H=0;
+function update(dt){
+  for(const L of lights){L.t+=dt;for(const h of L.heads){const st=lightState(L,h.d%2);h.lamps[0].material.emissiveIntensity=st==='red'?2:0;h.lamps[1].material.emissiveIntensity=st==='yellow'?2:0;h.lamps[2].material.emissiveIntensity=st==='green'?2:0}}
+  const play=G.on&&G.phase==='play';
+  if(play||!G.on)move(TR,dt,G.on);   // 메뉴 화면에선 저절로 돌아다님
+  for(const c of cars){move(c,dt,false);placeVeh(c,c.o,false);const w=c.o.children;}
+  placeVeh(TR,null,true);
+  if(G.on){checkDelivery();
+    if(G.phase==='deliver'){const b=G.box;b.t+=dt/1.2;const k=Math.min(1,b.t);boxMesh.position.lerpVectors(b.from,b.to,k).setY(2.5+Math.sin(k*Math.PI)*5);boxMesh.rotation.set(k*6,k*4,0);
+      if(G.t-G.delT>3){boxMesh.visible=false;if(G.done>=CFG.n){G.phase='end';G.endT=G.t;sfx.win();const s=Math.round(G.t-G.t0);banner('배달 끝! 🏆',`${G.done}곳 배달 · ${Math.floor(s/60)}분 ${s%60}초`);speak('배달 끝! 최고의 운전사예요!',true);pin.visible=spotRing.visible=false}
+        else{G.phase='play';newOrder()}}}
+    if(G.queued&&G.t-G.queuedT>6&&TR.kind==='edge')G.queued=0;   // 오래된 선택 지움
+    pin.visible=spotRing.visible=!!G.order&&G.phase!=='end';
+    pin.rotation.y+=dt*1.5;pin.position.y+=Math.sin(G.t*3)*.02;spotRing.material.opacity=.5+Math.sin(G.t*5)*.3;
+    if(eng)eng.g.gain.value=.04+TR.v*.006;if(eng)eng.o.frequency.value=40+TR.v*6}
+  // 핸들 돌리기
+  const tw=TR.kind==='turn'?(TR.d2===(TR.d+3)%4?1:TR.d2===(TR.d+1)%4?-1:0)*1.6:(G.queued?-G.queued*.35:0);
+  cab.wheel.rotation.z+=(tw-cab.wheel.rotation.z)*Math.min(1,dt*6);
+  const bl=Math.floor(G.t*3)%2;cab.blL.material.emissiveIntensity=(G.queued<0||TR.waitTurn<0)&&bl?2:0;cab.blR.material.emissiveIntensity=(G.queued>0||TR.waitTurn>0)&&bl?2:0;
+  if((G.queued||TR.waitTurn)&&Math.floor(G.t*3)!==G.lastBl){G.lastBl=Math.floor(G.t*3);if(G.on)sfx.blink()}
+}
+function viewportOrigin(){const bx=Math.max(0,(outerWidth-innerWidth)/2);return{x:screenX+bx,y:screenY+Math.max(0,outerHeight-innerHeight-bx)}}
+function computeRects(){const walls=load('walls',null),r={};
+  if(walls&&walls.left&&walls.front&&walls.right){const o=viewportOrigin();
+    for(const k of WALLS){const s=walls[k];let x0=s.x-o.x,y0=s.y-o.y,x1=x0+s.w,y1=y0+s.h;x0=Math.max(0,x0);y0=Math.max(0,y0);x1=Math.min(W,x1);y1=Math.min(H,y1);r[k]=x1-x0>50&&y1-y0>50?{x:x0,y:y0,w:x1-x0,h:y1-y0}:null}
+    if(r.left&&r.front&&r.right)return r}
+  const w=W/3;WALLS.forEach((k,i)=>r[k]={x:Math.round(i*w),y:0,w:Math.round(w),h:H});return r}
+const _v=new THREE.Vector3();
+function render(){for(const k of WALLS){const r=RECT[k];if(!r)continue;const c=cams[k];c.aspect=r.w/r.h;c.fov=THREE.MathUtils.radToDeg(2*Math.atan(1/c.aspect));c.updateProjectionMatrix();
+  const y=H-(r.y+r.h);renderer.setViewport(r.x,y,r.w,r.h);renderer.setScissor(r.x,y,r.w,r.h);renderer.render(scene,c)}
+  // 핸들 버튼을 핸들 손잡이 자리에
+  const f=RECT.front;if(!f)return;truck.updateMatrixWorld(true);
+  for(const [g,id] of [[cab.gripL,'#stL'],[cab.gripR,'#stR']]){g.getWorldPosition(_v);_v.project(cams.front);const el=$(id);
+    const x=f.x+(_v.x+1)/2*f.w,y=f.y+(1-_v.y)/2*f.h;el.style.left=x+'px';el.style.top=Math.min(y,f.y+f.h*.7)+'px'}
+  const hb=$('#hornBtn');hb.style.left=(f.x+f.w*.5)+'px';hb.style.top=(f.y+f.h*.86)+'px'}
+function txt(s,x,y,size,col='#fff',al='center',sh='#0008'){ctx.font=`${size}px ${FONT}`;ctx.textAlign=al;ctx.textBaseline='middle';ctx.fillStyle=sh;ctx.fillText(s,x+size*.06,y+size*.08);ctx.fillStyle=col;ctx.fillText(s,x,y)}
+function card(x,y,w,h){ctx.fillStyle='#ffffffe6';ctx.beginPath();ctx.roundRect(x,y,w,h,h*.18);ctx.fill()}
+function overlay(){ctx.clearRect(0,0,W,H);const f=RECT.front;if(!f||!G.on)return;
+  // 옆 창문 틀
+  for(const k of ['left','right']){const r=RECT[k];ctx.strokeStyle='#ff8a2a';ctx.lineWidth=r.h*.05;ctx.strokeRect(r.x+r.h*.025,r.y+r.h*.025,r.w-r.h*.05,r.h*.62);
+    ctx.fillStyle='#ff8a2acc';ctx.fillRect(r.x,r.y+r.h*.67,r.w,r.h*.33);txt(k==='left'?'◀ 톡 = 왼쪽으로':'톡 = 오른쪽으로 ▶',r.x+r.w/2,r.y+r.h*.83,r.h*.07,'#fff')}
+  // 주문 카드 (왼쪽 위)
+  const o=G.order;if(o){const w=f.w*.34,h=f.h*.2,x=f.x+f.w*.03,y=f.y+f.h*.04;card(x,y,w,h);
+    txt(o.item,x+w/2,y+h*.3,h*.24,'#333');ctx.fillStyle=o.col[1];ctx.beginPath();ctx.arc(x+w*.2,y+h*.7,h*.15,0,6.283);ctx.fill();txt(String(o.num),x+w*.2,y+h*.71,h*.2,'#fff','center','#0000');
+    txt(`${o.col[0]} 깃발 ${o.num}번 집`,x+w*.62,y+h*.7,h*.15,'#333','center','#0000')}
+  // 내비 (오른쪽 위)
+  {const w=f.w*.26,h=f.h*.2,x=f.x+f.w*.71,y=f.y+f.h*.04;card(x,y,w,h);const nav=navNext();
+    let a='⬆',s='쭉 가요';if(TR.kind==='wait'&&TR.waitLight){a='🚦';s='빨간불 멈춤'}else if(nav&&nav.here){a='📦';s='여기예요!'}else if(nav){a=nav.turn<0?'⬅':nav.turn>0?'➡':'⬆';s=nav.turn<0?'다음 길 왼쪽':nav.turn>0?'다음 길 오른쪽':'쭉 가요'}
+    if(TR.kind==='wait'&&TR.waitTurn!=null){a=TR.waitTurn<0?'⬅':'➡';s=(TR.waitTurn<0?'왼쪽':'오른쪽')+' 버튼!'}
+    txt(a,x+w*.22,y+h*.52,h*.55,'#2f80ff','center','#0000');txt(s,x+w*.62,y+h*.52,h*.17,'#333','center','#0000')}
+  txt(`📦 ${G.done} / ${CFG.n}`,f.x+f.w/2,f.y+f.h*.07,f.h*.06,'#fff');
+  if(G.msg&&(G.t-G.msgT<3||G.phase==='end')){const w=f.w*.5,h=f.h*.22,x=f.x+(f.w-w)/2,y=f.y+f.h*.18;card(x,y,w,h);txt(G.msg.t,x+w/2,y+h*.38,h*.3,'#ff7a2f','center','#0000');txt(G.msg.s,x+w/2,y+h*.76,h*.14,'#14406b','center','#0000')}
+}
+function resize(){W=innerWidth;H=innerHeight;cv.width=W;cv.height=H;renderer.setSize(W,H,false);RECT=computeRects();
+  const f=RECT.front,m=$('#menu');Object.assign(m.style,{left:f.x+'px',top:f.y+'px',width:f.w+'px',height:f.h+'px'});
+  const hb=$('#homeBtn');hb.style.left=(f.x+f.w*.04)+'px';hb.style.top=(f.y+f.h*.9)+'px'}
+addEventListener('resize',resize);
+let last=performance.now();
+function loop(now){const dt=Math.min(.05,(now-last)/1000);last=now;for(let k=0;k<(G.mul||1);k++){G.t+=dt;update(dt)}render();overlay();requestAnimationFrame(loop)}
+function syncOpts(){document.querySelectorAll('.opt').forEach(b=>b.classList.toggle('sel',String(CFG[b.dataset.k])===b.dataset.v))}
+document.querySelectorAll('.opt').forEach(b=>b.addEventListener('click',()=>{const k=b.dataset.k,v=b.dataset.v;CFG[k]=+v;save(k,CFG[k]);sfx.click();syncOpts()}));
+$('#startBtn').addEventListener('click',startGame);$('#homeBtn').addEventListener('click',goHome);
+(function(){const m=/walls=([-\d,;]+)/.exec(decodeURIComponent(location.hash||''));if(!m)return;
+  const p=m[1].split(';').map(t=>t.split(',').map(Number));if(p.length!==3||p.some(a=>a.length!==4||a.some(isNaN)))return;
+  const w={};WALLS.forEach((k,i)=>w[k]={x:p[i][0],y:p[i][1],w:p[i][2],h:p[i][3]});save('walls',w)})();
+syncOpts();resize();
+loadAll().then(()=>{buildTown();makeLights();$('#loading').remove();goHome();requestAnimationFrame(loop)}).catch(e=>{$('#loading').textContent='불러오기 실패: '+e.message;console.error(e)});
+window.__drive={G,CFG,TR,steer,startGame,goHome,navNext,cars};
+</script>
+<script src="/tuio-pointer.js"></script>
+</body>
+</html>
